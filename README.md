@@ -5,6 +5,8 @@
 This project is a **DIY music panel for children** designed to allow kids to play Spotify playlists safely and interactively while providing parental controls.  
 The system consists of a **portable ESP32-based panel** with colorful arcade buttons, LEDs, small control buttons (Prev / Start / Next), and a monochrome OLED display showing remaining playtime.  
 
+![Design Image](panel-design.png)
+
 The backend is handled by **Home Assistant (HA)** running on a **Raspberry Pi** in the kids’ room, which streams Spotify playlists to **Bluetooth speakers**.  
 Parental controls enforce a **daily time limit** for music playback, and the panel provides intuitive visual feedback with LEDs and pegs for playlist identification.
 
