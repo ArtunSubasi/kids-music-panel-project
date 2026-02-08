@@ -1,0 +1,37 @@
+dependencies:
+  abobija/rc522:
+    component_hash: 041887e58a81f8261aa370bd5f62b54edfe0396e226fb565ae14ce41af0ad891
+    dependencies:
+    - name: idf
+      require: private
+      version: ^5.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.4.3
+  chill-sam/ssd1306:
+    component_hash: 6be33faa92d913d198ef61f70d58708c4cebd5c93e74cf3e2a43446877cf04f6
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32s2
+    - esp32s3
+    - esp32c3
+    version: 1.1.2
+  idf:
+    source:
+      type: idf
+    version: 5.5.2
+direct_dependencies:
+- abobija/rc522
+- chill-sam/ssd1306
+- idf
+manifest_hash: b71b2ed5f8e30e0f5a862e8a49455646560f3de55a3d5ffd294965e5a6c64c40
+target: esp32
+version: 2.0.0
