@@ -97,11 +97,6 @@ static void send_play_media_request(const char *media_id)
     esp_http_client_cleanup(client);
 }
 
-
-
-/* Queue used by GPIO ISR (match existing code's name) */
-static QueueHandle_t interputQueue = NULL;
-
 /* WiFi connection state handling */
 #define WIFI_CONNECT_MAX_RETRY 5
 static EventGroupHandle_t s_wifi_event_group;
@@ -227,15 +222,6 @@ void app_main(void) {
 
     // Start WiFi using credentials from menuconfig; display will be updated by handlers
     wifi_init_sta();
-
-    // Create queue used by GPIO ISR (if present elsewhere in project)
-    interputQueue = xQueueCreate(10, sizeof(uint32_t));
-    if (interputQueue == NULL) {
-        ESP_LOGE(TAG, "Failed to create interputQueue");
-    } else {
-        ESP_LOGI(TAG, "interputQueue created");
-    }
-
 
     // ---------------------------------------------------------
     // 2. RFID INITIALIZATION (via rfid_scanner module)
