@@ -16,7 +16,6 @@
 #include "driver/rc522_spi.h"
 #include "rc522_picc.h"
 
-#include "esp_http_client.h"
 #include <string.h>
 #include "media_mapping.h"
 
@@ -25,6 +24,7 @@
 #include "common/config.h"
 #include "display/display.h"
 #include "rfid/rfid_scanner.h"
+#include "music_assistant/music_assistant_client.h"
 
 static const char *TAG = "MAIN_APP";
 
@@ -33,69 +33,6 @@ static display_t g_display = {0};
 
 /* Global RFID scanner handle */
 static rfid_scanner_t g_rfid_scanner = {0};
-
-/* Hard-coded test IDs (kept as requested) */
-static const char *TEST_DEVICE_ID = CONFIG_DEVICE_ID;
-
-static void send_play_media_request(const char *media_id)
-{
-    const char *host_cfg = CONFIG_MUSIC_ASSISTANT_HOST;
-    const char *api_key = CONFIG_MUSIC_ASSISTANT_API_KEY;
-
-    if (!media_id) {
-        ESP_LOGE(TAG, "media_id is NULL");
-        return;
-    }
-
-    if (host_cfg == NULL || strlen(host_cfg) == 0) {
-        ESP_LOGW(TAG, "MUSIC_ASSISTANT_HOST not set in menuconfig");
-        return;
-    }
-
-    char url[256];
-    if (strncmp(host_cfg, "http", 4) == 0) {
-        snprintf(url, sizeof(url), "%s/api/services/music_assistant/play_media", host_cfg);
-    } else {
-        snprintf(url, sizeof(url), "http://%s/api/services/music_assistant/play_media", host_cfg);
-    }
-
-    esp_http_client_config_t config = {
-        .url = url,
-        .method = HTTP_METHOD_POST,
-    };
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
-        ESP_LOGE(TAG, "Failed to init HTTP client");
-        return;
-    }
-
-    /* Authorization header */
-    char auth_header[256] = {0};
-    if (api_key && strlen(api_key) > 0) {
-        snprintf(auth_header, sizeof(auth_header), "Bearer %s", api_key);
-        esp_http_client_set_header(client, "Authorization", auth_header);
-    } else {
-        ESP_LOGW(TAG, "MUSIC_ASSISTANT_API_KEY not set; proceeding without Authorization header");
-    }
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-
-    char payload[512];
-    snprintf(payload, sizeof(payload), "{\"device_id\": \"%s\", \"media_id\": \"%s\", \"enqueue\": \"replace\"}", TEST_DEVICE_ID, media_id);
-
-    esp_http_client_set_post_field(client, payload, strlen(payload));
-
-    esp_err_t err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        int status = esp_http_client_get_status_code(client);
-        int len = esp_http_client_get_content_length(client);
-        ESP_LOGI(TAG, "HTTP POST completed, status=%d, len=%d", status, len);
-    } else {
-        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
-    }
-
-    esp_http_client_cleanup(client);
-}
 
 /* WiFi connection state handling */
 #define WIFI_CONNECT_MAX_RETRY 5
@@ -197,10 +134,10 @@ static void on_rfid_tag_scanned(void *arg, esp_event_base_t base, int32_t event_
         }
         display_show(&g_display, type_name ? type_name : "Unknown", uid_str);
         
-        /* Look up media ID from UID mapping */
+        /* Look up media ID from UID mapping and request playback */
         const char *media_id = media_mapping_get_media_id(&picc->uid);
         if (media_id) {
-            send_play_media_request(media_id);
+            music_assistant_play_media(media_id);
         } else {
             ESP_LOGW(TAG, "No media mapping found for this UID, skipping playback request");
         }
