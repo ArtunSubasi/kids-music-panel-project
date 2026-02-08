@@ -24,27 +24,15 @@
 #include "common/board_pins.h"
 #include "common/config.h"
 #include "display/display.h"
+#include "rfid/rfid_scanner.h"
 
 static const char *TAG = "MAIN_APP";
 
-// Globale Variable für das Display-Handle, damit wir aus dem Scanner darauf zugreifen können
+/* Global display handle */
 static display_t g_display = {0};
 
-static rc522_spi_config_t driver_config = {
-    .host_id = BOARD_RFID_SPI_HOST,
-    .bus_config = &(spi_bus_config_t){
-        .miso_io_num = BOARD_RFID_SPI_MISO,
-        .mosi_io_num = BOARD_RFID_SPI_MOSI,
-        .sclk_io_num = BOARD_RFID_SPI_CLK,
-    },
-    .dev_config = {
-        .spics_io_num = BOARD_RFID_PIN_CS,
-    },
-    .rst_io_num = BOARD_RFID_PIN_RST,
-};
-
-static rc522_driver_handle_t driver;
-static rc522_handle_t scanner;
+/* Global RFID scanner handle */
+static rfid_scanner_t g_rfid_scanner = {0};
 
 /* Hard-coded test IDs (kept as requested) */
 static const char *TEST_DEVICE_ID = CONFIG_DEVICE_ID;
@@ -250,20 +238,10 @@ void app_main(void) {
 
 
     // ---------------------------------------------------------
-    // 2. RFID INITIALISIERUNG (Neuer Code auf SPI3)
+    // 2. RFID INITIALIZATION (via rfid_scanner module)
     // ---------------------------------------------------------
-    // Hinweis: Der RC522-Treiber "abobija" kümmert sich intern um die 
-    // Bus-Initialisierung, wenn wir ihm die Pins geben.
-    rc522_spi_create(&driver_config, &driver);
-    rc522_driver_install(driver);
-
-    rc522_config_t scanner_config = {
-        .driver = driver,
-    };
-
-    rc522_create(&scanner_config, &scanner);
-    rc522_register_events(scanner, RC522_EVENT_PICC_STATE_CHANGED, on_rfid_tag_scanned, NULL);
-    rc522_start(scanner);
+    ESP_ERROR_CHECK(rfid_scanner_init(&g_rfid_scanner));
+    rfid_scanner_start(&g_rfid_scanner, on_rfid_tag_scanned);
     
-    ESP_LOGI(TAG, "System läuft. Halte eine Karte an den Leser.");
+    ESP_LOGI(TAG, "System ready. Waiting for RFID cards...");
 }
