@@ -49,7 +49,7 @@ install_manifest.txt
 CTestTestfile.cmake
 
 # IDE specific files
-.vscode/
+.vscode
 
 # Python environment files
 *.pyc
