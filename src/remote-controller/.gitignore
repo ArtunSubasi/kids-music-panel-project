@@ -48,6 +48,9 @@ cmake_install.cmake
 install_manifest.txt
 CTestTestfile.cmake
 
+# IDE specific files
+.vscode/
+
 # Python environment files
 *.pyc
 *.pyo
