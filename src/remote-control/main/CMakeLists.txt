@@ -7,6 +7,7 @@ idf_component_register(
         "rfid/rfid_scanner.c"
         "music_assistant/music_assistant_client.c"
         "wifi/wifi_manager.c"
+        "wifi/wifi_controller.c"
         "common/app_events.c"
     INCLUDE_DIRS
         "."

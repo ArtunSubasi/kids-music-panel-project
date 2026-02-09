@@ -24,6 +24,7 @@
 #include "rfid/rfid_scanner.h"
 #include "music_assistant/music_assistant_client.h"
 #include "wifi/wifi_manager.h"
+#include "wifi/wifi_controller.h"
 
 static const char *TAG = "MAIN_APP";
 
@@ -69,8 +70,8 @@ void app_main(void) {
     // ---------------------------------------------------------
     // 1. OLED INITIALIZATION (via display module)
     // ---------------------------------------------------------
-    ESP_ERROR_CHECK(display_init(&g_display));
     ESP_ERROR_CHECK(display_controller_init(&g_display));
+    ESP_ERROR_CHECK(display_init(&g_display));
     
     // Show initial screen
     display_show(&g_display, DISPLAY_MSG_WAITING);
@@ -79,6 +80,7 @@ void app_main(void) {
     // 2. WiFi INITIALIZATION (via wifi_manager module)
     // ---------------------------------------------------------
     // Start WiFi using credentials from menuconfig; display will be updated by handlers
+    ESP_ERROR_CHECK(wifi_controller_init());
     ESP_ERROR_CHECK(wifi_manager_init());
 
     // ---------------------------------------------------------
