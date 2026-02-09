@@ -20,6 +20,7 @@
 #include "common/board_pins.h"
 #include "common/config.h"
 #include "display/display.h"
+#include "display/display_controller.h"
 #include "rfid/rfid_scanner.h"
 #include "music_assistant/music_assistant_client.h"
 #include "wifi/wifi_manager.h"
@@ -61,10 +62,15 @@ static void on_rfid_tag_scanned(void *arg, esp_event_base_t base, int32_t event_
 }
 
 void app_main(void) {
+
+    // Create the default event loop before initializing any components that rely on it
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
     // ---------------------------------------------------------
     // 1. OLED INITIALIZATION (via display module)
     // ---------------------------------------------------------
     ESP_ERROR_CHECK(display_init(&g_display));
+    ESP_ERROR_CHECK(display_controller_init(&g_display));
     
     // Show initial screen
     display_show(&g_display, DISPLAY_MSG_WAITING);
@@ -73,7 +79,7 @@ void app_main(void) {
     // 2. WiFi INITIALIZATION (via wifi_manager module)
     // ---------------------------------------------------------
     // Start WiFi using credentials from menuconfig; display will be updated by handlers
-    ESP_ERROR_CHECK(wifi_manager_init(&g_display));
+    ESP_ERROR_CHECK(wifi_manager_init());
 
     // ---------------------------------------------------------
     // 3. RFID INITIALIZATION (via rfid_scanner module)
