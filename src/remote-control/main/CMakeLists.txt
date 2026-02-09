@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS
         "media_mapping.c"
-        "gpio_example_main.c"
+        "main.c"
         "display/display.c"
         "display/display_controller.c"
         "rfid/rfid_scanner.c"

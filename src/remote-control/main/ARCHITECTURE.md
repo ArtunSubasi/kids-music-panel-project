@@ -200,7 +200,7 @@ typedef struct {
 ```
 src/remote-control/
 ├── main/
-│   └── gpio_example_main.c         (entry point)
+│   └── main.c         (entry point)
 ├── components/
 │   ├── config/
 │   │   ├── config.h
