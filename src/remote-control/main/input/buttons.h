@@ -10,5 +10,7 @@
  */
 esp_err_t buttons_init();
 
+esp_err_t buttons_register(int pinNumber);
+
 
 #endif /* BUTTONS_H */

@@ -24,10 +24,7 @@
 
 static const char *TAG = "BUTTONS";
 
-
-QueueHandle_t interruptQueue = NULL;
-int led_on = 0;
-static TimerHandle_t debounce_timer = NULL;
+static QueueHandle_t interruptQueue = NULL;
 
 static void debounce_timer_cb(TimerHandle_t xTimer)
 {
@@ -41,6 +38,7 @@ static void debounce_timer_cb(TimerHandle_t xTimer)
 
 static void IRAM_ATTR gpio_interrupt_handler(void *args)
 {
+    TimerHandle_t debounce_timer = (TimerHandle_t)args;
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xTimerResetFromISR(debounce_timer, &xHigherPriorityTaskWoken);
     if (xHigherPriorityTaskWoken)
@@ -51,12 +49,11 @@ static void IRAM_ATTR gpio_interrupt_handler(void *args)
 
 void LED_Control_Task(void *params)
 {
-    int pinNumber, count = 0;
+    int pinNumber = (int)(intptr_t)params, count = 0;
     while (true)
     {
         if (xQueueReceive(interruptQueue, &pinNumber, portMAX_DELAY))
         {
-            led_on = !led_on;
             int level = gpio_get_level(PULLUP_ENABLED_PIN);
             printf("GPIO %d was pressed %d times. The state is %d\n", pinNumber, count++, level);
         }
@@ -64,9 +61,24 @@ void LED_Control_Task(void *params)
 }
 
 esp_err_t buttons_init() {
+    // Create queue for interrupt handling
+    interruptQueue = xQueueCreate(10, sizeof(int));
+    if (interruptQueue == NULL) {
+        printf("Failed to create interrupt queue\n");
+        return ESP_FAIL;
+    }
+
+    // Register interrupt handler
+    gpio_install_isr_service(0);
+
+    ESP_LOGI(TAG, "Buttons initialized successfully");
+    return ESP_OK;
+}
+
+esp_err_t buttons_register(int pinNumber) {
     // Configure Input GPIO with Pull-up
     gpio_config_t io_conf_pullup_enabled = {
-        .pin_bit_mask = (1ULL << PULLUP_ENABLED_PIN),   // Select GPIO 4
+        .pin_bit_mask = (1ULL << pinNumber),    // Select GPIO 4
         .mode = GPIO_MODE_INPUT,                // Set as input
         .pull_up_en = GPIO_PULLUP_ENABLE,       // Enable internal pull-up
         .pull_down_en = GPIO_PULLDOWN_DISABLE,  // Disable pull-down
@@ -74,22 +86,18 @@ esp_err_t buttons_init() {
     };
     gpio_config(&io_conf_pullup_enabled);
 
-    // Create queue for interrupt handling
-    interruptQueue = xQueueCreate(10, sizeof(int));
-    xTaskCreate(LED_Control_Task, "LED_Control_Task", 2048, NULL, 1, NULL);
-
     // Create a one-shot FreeRTOS timer for debounce. ISR will reset/start it.
-    debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, (void*)(intptr_t)PULLUP_ENABLED_PIN, debounce_timer_cb);
+    TimerHandle_t debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, (void*)(intptr_t)pinNumber, debounce_timer_cb);
     if (debounce_timer == NULL)
     {
         printf("Failed to create debounce timer\n");
         return ESP_FAIL;
     }
 
-    // Register interrupt handler
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(PULLUP_ENABLED_PIN, gpio_interrupt_handler, (void*)(intptr_t)PULLUP_ENABLED_PIN);
+    xTaskCreate(LED_Control_Task, "LED_Control_Task", 2048, (void*)(intptr_t)pinNumber, 1, NULL);
 
-    ESP_LOGI(TAG, "Buttons initialized successfully");
+    // Register interrupt handler
+    gpio_isr_handler_add(pinNumber, gpio_interrupt_handler, (void*)debounce_timer);
+    ESP_LOGI(TAG, "Button %d initialized successfully", pinNumber);
     return ESP_OK;
 }
