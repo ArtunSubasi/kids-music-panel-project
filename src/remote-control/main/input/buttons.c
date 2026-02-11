@@ -47,15 +47,14 @@ static void IRAM_ATTR gpio_interrupt_handler(void *args)
     }
 }
 
-void LED_Control_Task(void *params)
+static void LED_Control_Task(void *params)
 {
-    int pinNumber = (int)(intptr_t)params, count = 0;
+    int pinNumber = (int)(intptr_t)params;
     while (true)
     {
         if (xQueueReceive(interruptQueue, &pinNumber, portMAX_DELAY))
         {
-            int level = gpio_get_level(PULLUP_ENABLED_PIN);
-            printf("GPIO %d was pressed %d times. The state is %d\n", pinNumber, count++, level);
+            printf("GPIO %d was pressed\n", pinNumber);
         }
     }
 }
