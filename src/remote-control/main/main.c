@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/timers.h"
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -14,6 +15,7 @@
 #include "rc522_picc.h"
 
 #include <string.h>
+#include <stdint.h>
 #include "media_mapping.h"
 
 /* Centralized configuration headers */
@@ -26,6 +28,9 @@
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_controller.h"
 
+#define PULLUP_ENABLED_PIN 22
+#define DEBOUNCE_MS 50
+
 static const char *TAG = "MAIN_APP";
 
 /* Global display handle */
@@ -34,6 +39,47 @@ static display_t g_display = {0};
 /* Global RFID scanner handle */
 static rfid_scanner_t g_rfid_scanner = {0};
 
+
+QueueHandle_t interruptQueue = NULL;
+int led_on = 0;
+static TimerHandle_t debounce_timer = NULL;
+
+static void debounce_timer_cb(TimerHandle_t xTimer)
+{
+    int pinNumber = (int)(intptr_t)pvTimerGetTimerID(xTimer);
+    // For pull-up + active-low button: only enqueue if still LOW (pressed)
+    int level = gpio_get_level(pinNumber);
+    if (level == 0) {
+        xQueueSend(interruptQueue, &pinNumber, 0);
+    }
+}
+
+static void IRAM_ATTR gpio_interrupt_handler(void *args)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xTimerResetFromISR(debounce_timer, &xHigherPriorityTaskWoken);
+    if (xHigherPriorityTaskWoken)
+    {
+        portYIELD_FROM_ISR();
+    }
+}
+
+void LED_Control_Task(void *params)
+{
+    int pinNumber, count = 0;
+    while (true)
+    {
+        if (xQueueReceive(interruptQueue, &pinNumber, portMAX_DELAY))
+        {
+            led_on = !led_on;
+            int level = gpio_get_level(PULLUP_ENABLED_PIN);
+            printf("GPIO %d was pressed %d times. The state is %d\n", pinNumber, count++, level);
+        }
+    }
+}
+
+
+// TODO move this somewhere more appropriate, maybe rfid_scanner.c or a new app_events.c?
 static void on_rfid_tag_scanned(void *arg, esp_event_base_t base, int32_t event_id, void *data)
 {
     rc522_picc_state_changed_event_t *event = (rc522_picc_state_changed_event_t *)data;
@@ -90,4 +136,29 @@ void app_main(void) {
     rfid_scanner_start(&g_rfid_scanner, on_rfid_tag_scanned);
     
     ESP_LOGI(TAG, "System ready. Waiting for RFID cards...");
+
+    // Configure Input GPIO with Pull-up
+    gpio_config_t io_conf_pullup_enabled = {
+        .pin_bit_mask = (1ULL << PULLUP_ENABLED_PIN),   // Select GPIO 4
+        .mode = GPIO_MODE_INPUT,                // Set as input
+        .pull_up_en = GPIO_PULLUP_ENABLE,       // Enable internal pull-up
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,  // Disable pull-down
+        .intr_type = GPIO_INTR_NEGEDGE        
+    };
+    gpio_config(&io_conf_pullup_enabled);
+
+    // Create queue for interrupt handling
+    interruptQueue = xQueueCreate(10, sizeof(int));
+    xTaskCreate(LED_Control_Task, "LED_Control_Task", 2048, NULL, 1, NULL);
+
+    // Create a one-shot FreeRTOS timer for debounce. ISR will reset/start it.
+    debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, (void*)(intptr_t)PULLUP_ENABLED_PIN, debounce_timer_cb);
+    if (debounce_timer == NULL)
+    {
+        printf("Failed to create debounce timer\n");
+    }
+
+    // Register interrupt handler
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(PULLUP_ENABLED_PIN, gpio_interrupt_handler, (void*)(intptr_t)PULLUP_ENABLED_PIN);
 }
