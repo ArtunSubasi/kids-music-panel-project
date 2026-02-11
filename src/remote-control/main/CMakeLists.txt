@@ -9,6 +9,7 @@ idf_component_register(
         "wifi/wifi_manager.c"
         "wifi/wifi_controller.c"
         "common/app_events.c"
+        "input/buttons.c"
     INCLUDE_DIRS
         "."
         "common"
@@ -16,6 +17,7 @@ idf_component_register(
         "rfid"
         "music_assistant"
         "wifi"
+        "input"
     REQUIRES
         esp_wifi
         esp_netif
