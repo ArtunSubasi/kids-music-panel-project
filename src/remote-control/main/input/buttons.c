@@ -18,28 +18,25 @@ static const char *TAG = "BUTTONS";
 
 ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);
 
-// Event IDs inside BUTTON_EVENT base
-typedef enum {
-    PREVIOUS_TRACK_BUTTON_PRESSED = 1,
-    PLAY_PAUSE_BUTTON_PRESSED = 2,
-    NEXT_TRACK_BUTTON_PRESSED = 3
-} button_event_id_t;
-
 typedef struct {
     int pin;
-    button_event_id_t event_id;
+    buttons_event_id_t event_id;
 } button_pin_map_t;
 
 static const button_pin_map_t s_button_pin_map[] = {
-    { PIN_PREVIOUS_TRACK, PREVIOUS_TRACK_BUTTON_PRESSED },
-    { PIN_PLAY_PAUSE,     PLAY_PAUSE_BUTTON_PRESSED     },
-    { PIN_NEXT_TRACK,     NEXT_TRACK_BUTTON_PRESSED     },
+    { PIN_PREVIOUS_TRACK, BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED },
+    { PIN_PLAY_PAUSE,     BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED     },
+    { PIN_NEXT_TRACK,     BUTTON_EVENT_ID_NEXT_TRACK_PRESSED     },
 };
 
 static esp_event_loop_handle_t s_button_loop = NULL;
 
-static bool get_button_event_id_for_pin(int pin, button_event_id_t *out_event_id)
+static bool get_button_event_id_for_pin(int pin, buttons_event_id_t *out_event_id)
 {
+    if (out_event_id == NULL) {
+        return false;
+    }
+
     for (size_t i = 0; i < (sizeof(s_button_pin_map) / sizeof(s_button_pin_map[0])); i++) {
         if (s_button_pin_map[i].pin == pin) {
             *out_event_id = s_button_pin_map[i].event_id;
@@ -49,13 +46,13 @@ static bool get_button_event_id_for_pin(int pin, button_event_id_t *out_event_id
     return false;
 }
 
-static const char *event_id_to_name(button_event_id_t id)
+static const char *event_id_to_name(buttons_event_id_t id)
 {
     switch (id) {
-        case PREVIOUS_TRACK_BUTTON_PRESSED: return "PREVIOUS_TRACK_BUTTON_PRESSED";
-        case PLAY_PAUSE_BUTTON_PRESSED:     return "PLAY_PAUSE_BUTTON_PRESSED";
-        case NEXT_TRACK_BUTTON_PRESSED:     return "NEXT_TRACK_BUTTON_PRESSED";
-        default:                            return "UNKNOWN_BUTTON_EVENT";
+        case BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED:    return "PREVIOUS_TRACK_BUTTON_PRESSED";
+        case BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED:        return "PLAY_PAUSE_BUTTON_PRESSED";
+        case BUTTON_EVENT_ID_NEXT_TRACK_PRESSED:        return "NEXT_TRACK_BUTTON_PRESSED";
+        default:                                        return "UNKNOWN_BUTTON_EVENT";
     }
 }
 
@@ -67,8 +64,16 @@ static void button_event_log_handler(void *arg, esp_event_base_t base, int32_t i
         return;
     }
 
-    button_event_id_t event_id = (button_event_id_t)id;
-    int pin = (event_data != NULL) ? *(int *)event_data : -1;
+    buttons_event_id_t event_id = (buttons_event_id_t)id;
+    int pin = -1;
+
+    if (event_data != NULL) {
+        const buttons_event_data_t *event = (const buttons_event_data_t *)event_data;
+        pin = event->pin;
+        if (event->button_id != event_id) {
+            ESP_LOGW(TAG, "Mismatched button event payload id=%d payload=%d", (int)event_id, (int)event->button_id);
+        }
+    }
 
     ESP_LOGI(TAG, "Event: %s (id=%" PRId32 "), pin=%d", event_id_to_name(event_id), id, pin);
 }
@@ -79,18 +84,23 @@ static void debounce_timer_cb(TimerHandle_t xTimer)
 
     // Pull-up + active-low button: pressed only if still LOW after debounce
     if (gpio_get_level(pinNumber) == 0 && s_button_loop != NULL) {
-        button_event_id_t event_id;
+        buttons_event_id_t event_id;
         if (!get_button_event_id_for_pin(pinNumber, &event_id)) {
             ESP_LOGW(TAG, "No event mapping found for GPIO %d", pinNumber);
             return;
         }
 
+        buttons_event_data_t event_data = {
+            .pin = pinNumber,
+            .button_id = event_id,
+        };
+
         esp_err_t err = esp_event_post_to(
             s_button_loop,
             BUTTON_EVENT,
             event_id,
-            &pinNumber,
-            sizeof(pinNumber),
+            &event_data,
+            sizeof(event_data),
             0
         );
         if (err != ESP_OK) {
@@ -109,7 +119,7 @@ static void IRAM_ATTR gpio_interrupt_handler(void *args)
     }
 }
 
-esp_err_t buttons_init()
+esp_err_t buttons_init(void)
 {
     if (s_button_loop != NULL) {
         return ESP_OK; // already initialized
@@ -143,6 +153,26 @@ esp_err_t buttons_init()
     }
 
     return ESP_OK;
+}
+
+esp_err_t buttons_subscribe(int32_t event_id, esp_event_handler_t handler, void *handler_arg)
+{
+    if (s_button_loop == NULL) {
+        ESP_LOGE(TAG, "buttons_init() must be called before buttons_subscribe()");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (handler == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return esp_event_handler_register_with(
+        s_button_loop,
+        BUTTON_EVENT,
+        event_id,
+        handler,
+        handler_arg
+    );
 }
 
 esp_err_t buttons_register(int pinNumber)
