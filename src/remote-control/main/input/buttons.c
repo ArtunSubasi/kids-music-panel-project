@@ -9,6 +9,8 @@
 #include "driver/gpio.h"
 
 #include <stdint.h>
+#include <stdbool.h>
+#include <inttypes.h>
 
 #define DEBOUNCE_MS 50
 
@@ -18,18 +20,57 @@ ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);
 
 // Event IDs inside BUTTON_EVENT base
 typedef enum {
-    BUTTON_EVENT_PRESSED = 1,
+    PREVIOUS_TRACK_BUTTON_PRESSED = 1,
+    PLAY_PAUSE_BUTTON_PRESSED = 2,
+    NEXT_TRACK_BUTTON_PRESSED = 3
 } button_event_id_t;
 
+typedef struct {
+    int pin;
+    button_event_id_t event_id;
+} button_pin_map_t;
+
+static const button_pin_map_t s_button_pin_map[] = {
+    { PIN_PREVIOUS_TRACK, PREVIOUS_TRACK_BUTTON_PRESSED },
+    { PIN_PLAY_PAUSE,     PLAY_PAUSE_BUTTON_PRESSED     },
+    { PIN_NEXT_TRACK,     NEXT_TRACK_BUTTON_PRESSED     },
+};
+
 static esp_event_loop_handle_t s_button_loop = NULL;
+
+static bool get_button_event_id_for_pin(int pin, button_event_id_t *out_event_id)
+{
+    for (size_t i = 0; i < (sizeof(s_button_pin_map) / sizeof(s_button_pin_map[0])); i++) {
+        if (s_button_pin_map[i].pin == pin) {
+            *out_event_id = s_button_pin_map[i].event_id;
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *event_id_to_name(button_event_id_t id)
+{
+    switch (id) {
+        case PREVIOUS_TRACK_BUTTON_PRESSED: return "PREVIOUS_TRACK_BUTTON_PRESSED";
+        case PLAY_PAUSE_BUTTON_PRESSED:     return "PLAY_PAUSE_BUTTON_PRESSED";
+        case NEXT_TRACK_BUTTON_PRESSED:     return "NEXT_TRACK_BUTTON_PRESSED";
+        default:                            return "UNKNOWN_BUTTON_EVENT";
+    }
+}
 
 static void button_event_log_handler(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
     (void)arg;
-    if (base == BUTTON_EVENT && id == BUTTON_EVENT_PRESSED && event_data != NULL) {
-        int pin = *(int *)event_data;
-        ESP_LOGI(TAG, "GPIO %d was pressed", pin);
+
+    if (base != BUTTON_EVENT) {
+        return;
     }
+
+    button_event_id_t event_id = (button_event_id_t)id;
+    int pin = (event_data != NULL) ? *(int *)event_data : -1;
+
+    ESP_LOGI(TAG, "Event: %s (id=%" PRId32 "), pin=%d", event_id_to_name(event_id), id, pin);
 }
 
 static void debounce_timer_cb(TimerHandle_t xTimer)
@@ -38,10 +79,16 @@ static void debounce_timer_cb(TimerHandle_t xTimer)
 
     // Pull-up + active-low button: pressed only if still LOW after debounce
     if (gpio_get_level(pinNumber) == 0 && s_button_loop != NULL) {
+        button_event_id_t event_id;
+        if (!get_button_event_id_for_pin(pinNumber, &event_id)) {
+            ESP_LOGW(TAG, "No event mapping found for GPIO %d", pinNumber);
+            return;
+        }
+
         esp_err_t err = esp_event_post_to(
             s_button_loop,
             BUTTON_EVENT,
-            BUTTON_EVENT_PRESSED,
+            event_id,
             &pinNumber,
             sizeof(pinNumber),
             0
@@ -86,12 +133,15 @@ esp_err_t buttons_init()
         NULL
     ));
 
-    esp_err_t isr_err = gpio_install_isr_service(0);
-    if (isr_err != ESP_OK && isr_err != ESP_ERR_INVALID_STATE) {
-        return isr_err;
+    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+
+    ESP_LOGI(TAG, "Buttons module initialized successfully");
+
+    // Register all buttons declared in the pin->event map
+    for (size_t i = 0; i < (sizeof(s_button_pin_map) / sizeof(s_button_pin_map[0])); i++) {
+        ESP_ERROR_CHECK(buttons_register(s_button_pin_map[i].pin));
     }
 
-    ESP_LOGI(TAG, "Buttons initialized successfully");
     return ESP_OK;
 }
 

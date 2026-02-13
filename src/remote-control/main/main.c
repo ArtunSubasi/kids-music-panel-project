@@ -94,9 +94,6 @@ void app_main(void) {
     rfid_scanner_start(&g_rfid_scanner, on_rfid_tag_scanned);
     
     ESP_ERROR_CHECK(buttons_init());
-    ESP_ERROR_CHECK(buttons_register(19));
-    ESP_ERROR_CHECK(buttons_register(21));
-    ESP_ERROR_CHECK(buttons_register(22));
 
     ESP_LOGI(TAG, "System ready. Waiting for RFID cards...");
 }

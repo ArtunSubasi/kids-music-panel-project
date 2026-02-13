@@ -5,6 +5,9 @@
 #include "esp_event.h"
 #include "esp_event_base.h"
 
+#define PIN_PREVIOUS_TRACK GPIO_NUM_22
+#define PIN_PLAY_PAUSE GPIO_NUM_21
+#define PIN_NEXT_TRACK GPIO_NUM_19
 
 /**
  * @file buttons.h
