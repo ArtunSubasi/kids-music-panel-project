@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "freertos/timers.h"
 #include "esp_adc/adc_oneshot.h"
+#include "music_assistant/music_assistant_client.h"
 #include <string.h>
 
 static const char *TAG = "POTENTIOMETER";
@@ -84,7 +85,11 @@ static void send_volume_update(int volume, int raw_adc, int smoothed_adc) {
     ESP_LOGI(TAG, "Volume update: raw=%d, smoothed=%d, volume=%d%%", 
              raw_adc, smoothed_adc, volume);
     
-    // TODO Phase 2: Call music_assistant_set_volume(volume) here
+    /* Send volume to Music Assistant */
+    esp_err_t err = music_assistant_set_volume(volume);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to send volume to Music Assistant: %s", esp_err_to_name(err));
+    }
     
     s_last_logged_volume = volume;
     s_last_update_time = xTaskGetTickCount();

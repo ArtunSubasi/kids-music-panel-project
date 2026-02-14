@@ -58,3 +58,11 @@ esp_err_t music_assistant_play_pause(void);
  * @return ESP_OK on HTTP 2xx response, ESP_FAIL otherwise
  */
 esp_err_t music_assistant_next_track(void);
+
+/**
+ * @brief Set the volume level on Music Assistant
+ *
+ * @param volume_level Volume level (0-100)
+ * @return ESP_OK on HTTP 2xx response, ESP_FAIL otherwise
+ */
+esp_err_t music_assistant_set_volume(int volume_level);

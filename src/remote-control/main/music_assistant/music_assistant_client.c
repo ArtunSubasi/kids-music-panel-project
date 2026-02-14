@@ -184,3 +184,21 @@ esp_err_t music_assistant_next_track(void)
 {
     return music_assistant_call_media_player_service("media_next_track");
 }
+
+esp_err_t music_assistant_set_volume(int volume_level)
+{
+
+    if (volume_level < 0 || volume_level > 100) {
+        ESP_LOGE(TAG, "Invalid volume level: %d (must be 0-100)", volume_level);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Convert 0-100 to 0.0-1.0 float as Home Assistant/Music Assistant expects */
+    float volume_float = volume_level / 100.0f;
+
+    char payload[256];
+    snprintf(payload, sizeof(payload),
+             "{\"entity_id\":\"all\",\"volume_level\":%.2f}", volume_float);
+
+    return music_assistant_post_service("media_player/volume_set", payload);
+}
