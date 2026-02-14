@@ -6,6 +6,7 @@ idf_component_register(
         "display/display_controller.c"
         "rfid/rfid_scanner.c"
         "music_assistant/music_assistant_client.c"
+        "music_assistant/music_assistant_controller.c"
         "wifi/wifi_manager.c"
         "wifi/wifi_controller.c"
         "common/app_events.c"

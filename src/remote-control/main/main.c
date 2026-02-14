@@ -25,6 +25,7 @@
 #include "display/display_controller.h"
 #include "rfid/rfid_scanner.h"
 #include "music_assistant/music_assistant_client.h"
+#include "music_assistant/music_assistant_controller.h"
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_controller.h"
 #include "input/buttons.h"
@@ -93,7 +94,9 @@ void app_main(void) {
     ESP_ERROR_CHECK(rfid_scanner_init(&g_rfid_scanner));
     rfid_scanner_start(&g_rfid_scanner, on_rfid_tag_scanned);
     
+    ESP_ERROR_CHECK(music_assistant_client_init());
     ESP_ERROR_CHECK(buttons_init());
+    ESP_ERROR_CHECK(music_assistant_controller_init());
 
     ESP_LOGI(TAG, "System ready. Waiting for RFID cards...");
 }
