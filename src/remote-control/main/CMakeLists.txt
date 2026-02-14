@@ -11,6 +11,7 @@ idf_component_register(
         "wifi/wifi_controller.c"
         "common/app_events.c"
         "input/buttons.c"
+        "input/potentiometer.c"
     INCLUDE_DIRS
         "."
         "common"
@@ -26,4 +27,5 @@ idf_component_register(
         esp_event
         driver
         esp_http_client
+        esp_adc
 )

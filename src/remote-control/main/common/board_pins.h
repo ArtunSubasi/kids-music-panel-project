@@ -27,4 +27,8 @@
 #define BOARD_RFID_PIN_CS           15      /* Also called SDA in RC522 context */
 #define BOARD_RFID_PIN_RST          27      /* Soft-reset */
 
+/* ==================== Potentiometer (ADC1) ==================== */
+#define BOARD_POTENTIOMETER_GPIO            33
+#define BOARD_POTENTIOMETER_ADC_CHANNEL     ADC_CHANNEL_5  /* GPIO 33 = ADC1_CH5 */
+
 #endif /* BOARD_PINS_H */
