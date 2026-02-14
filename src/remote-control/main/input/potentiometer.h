@@ -25,6 +25,10 @@
 #define POTENTIOMETER_MOVING_AVG_SIZE 8
 #define POTENTIOMETER_HYSTERESIS_PERCENT 2  /* Only log if change > 2% */
 
+/* Debouncing and rate limiting */
+#define POTENTIOMETER_MIN_UPDATE_INTERVAL_MS 500   /* Minimum time between updates */
+#define POTENTIOMETER_SETTLING_TIME_MS 400         /* Wait for value to stabilize */
+
 /* Sampling rate */
 #define POTENTIOMETER_SAMPLE_INTERVAL_MS 100
 
