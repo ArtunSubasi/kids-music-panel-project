@@ -106,7 +106,8 @@ static void send_volume_update(int volume, int raw_adc, int smoothed_adc) {
 static void potentiometer_task(void *pvParameters) {
     ESP_LOGI(TAG, "Potentiometer task started");
     
-    int last_volume = -1;
+    /* Initialize with current logged volume to prevent boot-time update */
+    int last_volume = s_last_logged_volume;
     
     while (1) {
         int raw_adc = 0;
@@ -191,6 +192,28 @@ esp_err_t potentiometer_init(void) {
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure ADC channel: %s", esp_err_to_name(err));
         return err;
+    }
+    
+    /* Read initial potentiometer position to prevent boot update */
+    int initial_adc = 0;
+    err = adc_oneshot_read(s_adc_handle, BOARD_POTENTIOMETER_ADC_CHANNEL, &initial_adc);
+    if (err == ESP_OK) {
+        /* Pre-fill the moving average buffer with initial reading */
+        for (int i = 0; i < POTENTIOMETER_MOVING_AVG_SIZE; i++) {
+            s_adc_samples[i] = initial_adc;
+        }
+        s_buffer_filled = true;
+        
+        /* Set initial volume to prevent sending on first read */
+        int initial_volume = map_adc_to_volume(initial_adc);
+        s_last_logged_volume = initial_volume;
+        s_current_volume = initial_volume;
+        
+        ESP_LOGI(TAG, "Initial potentiometer position: %d%% (ADC: %d)", 
+                 initial_volume, initial_adc);
+    } else {
+        ESP_LOGW(TAG, "Failed to read initial ADC value: %s, will send on first change", 
+                 esp_err_to_name(err));
     }
     
     /* Create ADC reading task */
