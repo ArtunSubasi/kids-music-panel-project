@@ -8,6 +8,8 @@
 
 static const char *TAG = "MUSIC_ASSISTANT_CLIENT";
 
+#define MAX_HTTP_RESPONSE_BUFFER 512
+
 static esp_err_t music_assistant_post_service(const char *service_path, const char *payload)
 {
     const char *host_cfg = CONFIG_MUSIC_ASSISTANT_HOST;
@@ -30,15 +32,26 @@ static esp_err_t music_assistant_post_service(const char *service_path, const ch
         snprintf(url, sizeof(url), "http://%s/api/services/%s", host_cfg, service_path);
     }
 
+    // Buffer to capture response body
+    char *response_buffer = malloc(MAX_HTTP_RESPONSE_BUFFER);
+    if (!response_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate response buffer");
+        return ESP_ERR_NO_MEM;
+    }
+    memset(response_buffer, 0, MAX_HTTP_RESPONSE_BUFFER);
+
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
         .timeout_ms = HTTP_REQUEST_TIMEOUT_MS,
+        .buffer_size = MAX_HTTP_RESPONSE_BUFFER,
+        .user_data = response_buffer,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
         ESP_LOGE(TAG, "Failed to init HTTP client");
+        free(response_buffer);
         return ESP_FAIL;
     }
 
@@ -52,22 +65,44 @@ static esp_err_t music_assistant_post_service(const char *service_path, const ch
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, payload, strlen(payload));
 
+    // Log the request details
+    ESP_LOGI(TAG, "POST %s", url);
+    ESP_LOGI(TAG, "Payload: %s", payload);
+
     esp_err_t err = esp_http_client_perform(client);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP POST request failed for service '%s': %s", service_path, esp_err_to_name(err));
         esp_http_client_cleanup(client);
+        free(response_buffer);
         return ESP_FAIL;
     }
 
     int status = esp_http_client_get_status_code(client);
-    int len = esp_http_client_get_content_length(client);
-    ESP_LOGI(TAG, "Service '%s' completed, status=%d, len=%d", service_path, status, len);
-    esp_http_client_cleanup(client);
+    int content_length = esp_http_client_get_content_length(client);
+    
+    // Read response body
+    int data_read = esp_http_client_read_response(client, response_buffer, MAX_HTTP_RESPONSE_BUFFER - 1);
+    if (data_read >= 0) {
+        response_buffer[data_read] = '\0';
+    }
 
+    ESP_LOGI(TAG, "Service '%s' completed, status=%d, len=%d", service_path, status, content_length);
+
+    // Log response body on error
     if (status < 200 || status >= 300) {
+        ESP_LOGE(TAG, "HTTP %d Error Response: %s", status, response_buffer);
+        esp_http_client_cleanup(client);
+        free(response_buffer);
         return ESP_FAIL;
     }
 
+    // Log success response for debugging
+    if (data_read > 0) {
+        ESP_LOGD(TAG, "Response body: %s", response_buffer);
+    }
+
+    esp_http_client_cleanup(client);
+    free(response_buffer);
     return ESP_OK;
 }
 

@@ -18,6 +18,11 @@ static const uid_media_entry_t uid_media_map[] = {
     {
         .uid_string = "E6 2C 6F 04",
         .media_id = "radiobrowser://radio/82ebafb0-e192-40c5-abea-02834259f01d"
+    },
+    {
+        // Wilder Hühner Folge 1
+        .uid_string = "19 88 3E A7",
+        .media_id = "apple_music--82mCh3DC://album/1620863771"
     }
 };
 
