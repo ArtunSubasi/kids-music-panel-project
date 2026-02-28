@@ -12,6 +12,7 @@
 
 /* ========== Device Configuration ========== */
 #define CONFIG_DEVICE_ID                "250c3cfed7cfa1bc079d3b7fe26417f2"
+#define CONFIG_MEDIA_PLAYER_ENTITY_ID   "media_player.schlafzimmer_squeezlite_client_jbl_charge"
 
 /* ========== Timing Constants ========== */
 #define WIFI_CONNECT_MAX_RETRY          5

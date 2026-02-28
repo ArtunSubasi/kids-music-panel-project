@@ -41,6 +41,8 @@ static const button_pin_map_t s_button_pin_map[] = {
     { BOARD_BUTTON_ROTARY_LEFT,    BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED },
     { BOARD_BUTTON_ROTARY_CENTER,  BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED     },
     { BOARD_BUTTON_ROTARY_RIGHT,   BUTTON_EVENT_ID_NEXT_TRACK_PRESSED     },
+    { BOARD_BUTTON_ROTARY_UP,      BUTTON_EVENT_ID_SEEK_FORWARD_PRESSED   },
+    { BOARD_BUTTON_ROTARY_DOWN,    BUTTON_EVENT_ID_SEEK_BACKWARD_PRESSED  },
 };
 
 static esp_event_loop_handle_t s_button_loop = NULL;
@@ -66,6 +68,8 @@ static const char *event_id_to_name(buttons_event_id_t id)
         case BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED:    return "PREVIOUS_TRACK_BUTTON_PRESSED";
         case BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED:        return "PLAY_PAUSE_BUTTON_PRESSED";
         case BUTTON_EVENT_ID_NEXT_TRACK_PRESSED:        return "NEXT_TRACK_BUTTON_PRESSED";
+        case BUTTON_EVENT_ID_SEEK_FORWARD_PRESSED:      return "SEEK_FORWARD_BUTTON_PRESSED";
+        case BUTTON_EVENT_ID_SEEK_BACKWARD_PRESSED:     return "SEEK_BACKWARD_BUTTON_PRESSED";
         default:                                        return "UNKNOWN_BUTTON_EVENT";
     }
 }

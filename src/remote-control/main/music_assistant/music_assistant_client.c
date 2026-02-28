@@ -236,3 +236,170 @@ esp_err_t music_assistant_volume_down(void)
 
     return music_assistant_post_service("media_player/volume_down", payload);
 }
+
+esp_err_t music_assistant_seek_forward(int seconds)
+{
+    const char *device_id = CONFIG_DEVICE_ID;
+
+    if (device_id == NULL || strlen(device_id) == 0) {
+        ESP_LOGE(TAG, "DEVICE_ID not set");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (seconds <= 0) {
+        seconds = 10;
+    }
+
+    char payload[256];
+    snprintf(payload, sizeof(payload),
+             "{\"device_id\":\"%s\",\"seek_position\":%d}",
+             device_id, seconds);
+
+    return music_assistant_post_service("media_player/media_seek", payload);
+}
+
+esp_err_t music_assistant_seek_backward(int seconds)
+{
+    const char *device_id = CONFIG_DEVICE_ID;
+
+    if (device_id == NULL || strlen(device_id) == 0) {
+        ESP_LOGE(TAG, "DEVICE_ID not set");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (seconds <= 0) {
+        seconds = 10;
+    }
+
+    char payload[256];
+    snprintf(payload, sizeof(payload),
+             "{\"device_id\":\"%s\",\"seek_position\":-%d}",
+             device_id, seconds);
+
+    return music_assistant_post_service("media_player/media_seek", payload);
+}
+esp_err_t music_assistant_get_media_position(float *position)
+{
+    const char *host_cfg = CONFIG_MUSIC_ASSISTANT_HOST;
+    const char *api_key = CONFIG_MUSIC_ASSISTANT_API_KEY;
+    const char *entity_id = CONFIG_MEDIA_PLAYER_ENTITY_ID;
+
+    if (position == NULL) {
+        ESP_LOGE(TAG, "position pointer is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (host_cfg == NULL || strlen(host_cfg) == 0) {
+        ESP_LOGW(TAG, "MUSIC_ASSISTANT_HOST not set in menuconfig");
+        return ESP_FAIL;
+    }
+
+    if (entity_id == NULL || strlen(entity_id) == 0) {
+        ESP_LOGE(TAG, "CONFIG_MEDIA_PLAYER_ENTITY_ID not set");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char url[320];
+    if (strncmp(host_cfg, "http", 4) == 0) {
+        snprintf(url, sizeof(url), "%s/api/states/%s", host_cfg, entity_id);
+    } else {
+        snprintf(url, sizeof(url), "http://%s/api/states/%s", host_cfg, entity_id);
+    }
+
+    // Allocate larger buffer for state response (can be quite large with all attributes)
+    const int STATE_BUFFER_SIZE = 2048;
+    char *response_buffer = malloc(STATE_BUFFER_SIZE);
+    if (!response_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate response buffer");
+        return ESP_ERR_NO_MEM;
+    }
+    memset(response_buffer, 0, STATE_BUFFER_SIZE);
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = HTTP_REQUEST_TIMEOUT_MS,
+        .buffer_size = STATE_BUFFER_SIZE,
+        .user_data = response_buffer,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "Failed to init HTTP client");
+        free(response_buffer);
+        return ESP_FAIL;
+    }
+
+    char auth_header[256] = {0};
+    if (api_key && strlen(api_key) > 0) {
+        snprintf(auth_header, sizeof(auth_header), "Bearer %s", api_key);
+        esp_http_client_set_header(client, "Authorization", auth_header);
+    }
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        free(response_buffer);
+        return ESP_FAIL;
+    }
+
+    int content_length = esp_http_client_fetch_headers(client);
+    int status = esp_http_client_get_status_code(client);
+    
+    int data_read = 0;
+    if (status >= 200 && status < 300 && content_length > 0) {
+        data_read = esp_http_client_read(client, response_buffer, STATE_BUFFER_SIZE - 1);
+        if (data_read >= 0) {
+            response_buffer[data_read] = '\0';
+        }
+    }
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (status < 200 || status >= 300) {
+        ESP_LOGE(TAG, "HTTP %d Error getting state", status);
+        free(response_buffer);
+        return ESP_FAIL;
+    }
+
+    // Log response for debugging
+    ESP_LOGI(TAG, "State response (%d bytes): %s", data_read, response_buffer);
+
+    // Parse JSON to extract media_position from attributes
+    // Simple string search for "media_position":<value>
+    char *pos_str = strstr(response_buffer, "\"media_position\":");
+    if (pos_str) {
+        pos_str += strlen("\"media_position\":");
+        *position = atof(pos_str);
+        ESP_LOGI(TAG, "Current media position: %.1f seconds", *position);
+        free(response_buffer);
+        return ESP_OK;
+    } else {
+        ESP_LOGW(TAG, "media_position not found in response");
+        free(response_buffer);
+        return ESP_FAIL;
+    }
+}
+
+esp_err_t music_assistant_seek_to_position(float position)
+{
+    const char *device_id = CONFIG_DEVICE_ID;
+
+    if (device_id == NULL || strlen(device_id) == 0) {
+        ESP_LOGE(TAG, "DEVICE_ID not set");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (position < 0) {
+        position = 0;
+    }
+
+    char payload[256];
+    snprintf(payload, sizeof(payload),
+             "{\"device_id\":\"%s\",\"seek_position\":%.1f}",
+             device_id, position);
+
+    return music_assistant_post_service("media_player/media_seek", payload);
+}

@@ -80,3 +80,35 @@ esp_err_t music_assistant_volume_up(void);
  * @return ESP_OK on HTTP 2xx response, ESP_FAIL otherwise
  */
 esp_err_t music_assistant_volume_down(void);
+
+/**
+ * @brief Seek forward in current media on Music Assistant
+ *
+ * @param seconds Number of seconds to seek forward (default: 10)
+ * @return ESP_OK on HTTP 2xx response, ESP_FAIL otherwise
+ */
+esp_err_t music_assistant_seek_forward(int seconds);
+
+/**
+ * @brief Seek backward in current media on Music Assistant
+ *
+ * @param seconds Number of seconds to seek backward (default: 10)
+ * @return ESP_OK on HTTP 2xx response, ESP_FAIL otherwise
+ */
+esp_err_t music_assistant_seek_backward(int seconds);
+
+/**
+ * @brief Get current media position from Music Assistant
+ *
+ * @param position Pointer to store the current position in seconds
+ * @return ESP_OK on success, ESP_FAIL otherwise
+ */
+esp_err_t music_assistant_get_media_position(float *position);
+
+/**
+ * @brief Seek to absolute position in current media
+ *
+ * @param position Absolute position in seconds
+ * @return ESP_OK on HTTP 2xx response, ESP_FAIL otherwise
+ */
+esp_err_t music_assistant_seek_to_position(float position);
