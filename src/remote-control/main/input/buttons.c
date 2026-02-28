@@ -109,18 +109,22 @@ static void volume_update_task(void *pvParameters)
         
         ESP_LOGI(TAG, "Encoder accumulated steps: %d", steps);
         
-        /* Send volume update to Music Assistant based on net direction */
+        /* Send volume updates to Music Assistant - one call per accumulated step */
         if (steps > 0) {
             ESP_LOGI(TAG, "Volume UP (%d steps)", steps);
-            esp_err_t err = music_assistant_volume_up();
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to increase volume: %s", esp_err_to_name(err));
+            for (int i = 0; i < steps; i++) {
+                esp_err_t err = music_assistant_volume_up();
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to increase volume on step %d: %s", i+1, esp_err_to_name(err));
+                }
             }
         } else if (steps < 0) {
             ESP_LOGI(TAG, "Volume DOWN (%d steps)", -steps);
-            esp_err_t err = music_assistant_volume_down();
-            if (err != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to decrease volume: %s", esp_err_to_name(err));
+            for (int i = 0; i < -steps; i++) {
+                esp_err_t err = music_assistant_volume_down();
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to decrease volume on step %d: %s", i+1, esp_err_to_name(err));
+                }
             }
         }
     }
