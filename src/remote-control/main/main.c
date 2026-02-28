@@ -29,7 +29,6 @@
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_controller.h"
 #include "input/buttons.h"
-#include "input/potentiometer.h"
 
 static const char *TAG = "MAIN_APP";
 
@@ -97,7 +96,6 @@ void app_main(void) {
     
     ESP_ERROR_CHECK(music_assistant_client_init());
     ESP_ERROR_CHECK(buttons_init());
-    ESP_ERROR_CHECK(potentiometer_init());
     ESP_ERROR_CHECK(music_assistant_controller_init());
 
     ESP_LOGI(TAG, "System ready. Waiting for RFID cards...");

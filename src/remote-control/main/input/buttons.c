@@ -1,4 +1,6 @@
 #include "buttons.h"
+#include "board_pins.h"
+#include "music_assistant/music_assistant_client.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -14,9 +16,21 @@
 
 #define DEBOUNCE_MS 50
 
+/* Volume constants */
+#define VOLUME_UPDATE_DEBOUNCE_MS 200  /* Min time between volume updates */
+
 static const char *TAG = "BUTTONS";
 
 ESP_EVENT_DEFINE_BASE(BUTTON_EVENT);
+
+/* Rotary encoder volume control state */
+static volatile int s_accumulated_steps = 0;  /* Accumulated encoder steps (negative = down, positive = up) */
+static TimerHandle_t s_volume_update_timer = NULL;  /* Timer for deferred volume updates */
+static TaskHandle_t s_volume_update_task = NULL;  /* Task for sending volume updates */
+
+/* Debug: last seen encoder state for logging changes */
+static uint8_t s_last_seen_a = 1;
+static uint8_t s_last_seen_b = 1;
 
 typedef struct {
     int pin;
@@ -24,9 +38,9 @@ typedef struct {
 } button_pin_map_t;
 
 static const button_pin_map_t s_button_pin_map[] = {
-    { PIN_PREVIOUS_TRACK, BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED },
-    { PIN_PLAY_PAUSE,     BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED     },
-    { PIN_NEXT_TRACK,     BUTTON_EVENT_ID_NEXT_TRACK_PRESSED     },
+    { BOARD_BUTTON_ROTARY_LEFT,    BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED },
+    { BOARD_BUTTON_ROTARY_CENTER,  BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED     },
+    { BOARD_BUTTON_ROTARY_RIGHT,   BUTTON_EVENT_ID_NEXT_TRACK_PRESSED     },
 };
 
 static esp_event_loop_handle_t s_button_loop = NULL;
@@ -76,6 +90,112 @@ static void button_event_log_handler(void *arg, esp_event_base_t base, int32_t i
     }
 
     ESP_LOGI(TAG, "Event: %s (id=%" PRId32 "), pin=%d", event_id_to_name(event_id), id, pin);
+}
+
+/**
+ * @brief Task to handle volume updates with sufficient stack space for HTTP calls
+ */
+static void volume_update_task(void *pvParameters)
+{
+    (void)pvParameters;
+    
+    while (1) {
+        /* Wait for notification from timer callback */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        
+        /* Get accumulated steps and reset counter */
+        int steps = s_accumulated_steps;
+        s_accumulated_steps = 0;
+        
+        ESP_LOGI(TAG, "Encoder accumulated steps: %d", steps);
+        
+        /* Send volume update to Music Assistant based on net direction */
+        if (steps > 0) {
+            ESP_LOGI(TAG, "Volume UP (%d steps)", steps);
+            esp_err_t err = music_assistant_volume_up();
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to increase volume: %s", esp_err_to_name(err));
+            }
+        } else if (steps < 0) {
+            ESP_LOGI(TAG, "Volume DOWN (%d steps)", -steps);
+            esp_err_t err = music_assistant_volume_down();
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to decrease volume: %s", esp_err_to_name(err));
+            }
+        }
+    }
+}
+
+/**
+ * @brief Timer callback to trigger volume update task
+ */
+static void volume_update_timer_cb(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    
+    /* Notify the volume update task to send the update */
+    if (s_volume_update_task != NULL) {
+        xTaskNotifyGive(s_volume_update_task);
+    }
+}
+
+/**
+ * @brief Debug task to poll encoder pins and log any changes
+ * This helps diagnose if the hardware is working
+ */
+static void encoder_debug_task(void *pvParameters)
+{
+    (void)pvParameters;
+    
+    ESP_LOGI(TAG, "Encoder debug task started - will log pin changes every 100ms");
+    
+    while (1) {
+        uint8_t a = gpio_get_level(BOARD_BUTTON_ROTARY_PHASE_A);
+        uint8_t b = gpio_get_level(BOARD_BUTTON_ROTARY_PHASE_B);
+        
+        if (a != s_last_seen_a || b != s_last_seen_b) {
+            ESP_LOGI(TAG, "PIN CHANGE: A=%d->%d, B=%d->%d", s_last_seen_a, a, s_last_seen_b, b);
+            s_last_seen_a = a;
+            s_last_seen_b = b;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+/**
+ * @brief Rotary encoder ISR handler
+ * 
+ * Simplified quadrature decoding - triggers on any edge of PHASE A,
+ * samples PHASE B to determine direction
+ */
+static void IRAM_ATTR rotary_encoder_isr_handler(void *args)
+{
+    (void)args;
+    
+    /* Read both phases */
+    uint8_t phase_a = gpio_get_level(BOARD_BUTTON_ROTARY_PHASE_A);
+    uint8_t phase_b = gpio_get_level(BOARD_BUTTON_ROTARY_PHASE_B);
+    
+    /* Determine direction: when A falls (goes to 0), check B */
+    if (phase_a == 0) {
+        /* A just went low - if B is low = CW, if B is high = CCW */
+        int8_t direction = (phase_b == 0) ? 1 : -1;
+        s_accumulated_steps += direction;
+    } else {
+        /* A just went high - if B is high = CW, if B is low = CCW */
+        int8_t direction = (phase_b == 1) ? 1 : -1;
+        s_accumulated_steps += direction;
+    }
+    
+    /* Always trigger the timer on any transition */
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    if (s_volume_update_timer != NULL) {
+        xTimerResetFromISR(s_volume_update_timer, &xHigherPriorityTaskWoken);
+        if (xHigherPriorityTaskWoken) {
+            portYIELD_FROM_ISR();
+        }
+    }
 }
 
 static void debounce_timer_cb(TimerHandle_t xTimer)
@@ -151,6 +271,85 @@ esp_err_t buttons_init(void)
     for (size_t i = 0; i < (sizeof(s_button_pin_map) / sizeof(s_button_pin_map[0])); i++) {
         ESP_ERROR_CHECK(buttons_register(s_button_pin_map[i].pin));
     }
+
+    // Initialize rotary encoder for volume control
+    ESP_LOGI(TAG, "Initializing rotary encoder on GPIO %d (PHASE A) and GPIO %d (PHASE B)",
+             BOARD_BUTTON_ROTARY_PHASE_A, BOARD_BUTTON_ROTARY_PHASE_B);
+    
+    /* Create volume update task with sufficient stack for HTTP calls */
+    BaseType_t ret = xTaskCreate(
+        volume_update_task,
+        "vol_update",
+        4096,  /* Stack size - sufficient for HTTP operations */
+        NULL,
+        5,     /* Priority */
+        &s_volume_update_task
+    );
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create volume update task");
+        return ESP_FAIL;
+    }
+    
+    /* Create volume update timer */
+    s_volume_update_timer = xTimerCreate(
+        "vol_timer",
+        pdMS_TO_TICKS(VOLUME_UPDATE_DEBOUNCE_MS),
+        pdFALSE,  /* One-shot timer */
+        NULL,
+        volume_update_timer_cb
+    );
+    if (s_volume_update_timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create volume update timer");
+        return ESP_FAIL;
+    }
+    
+    /* Configure PHASE A with interrupt on any edge */
+    gpio_config_t encoder_phase_a_config = {
+        .pin_bit_mask = (1ULL << BOARD_BUTTON_ROTARY_PHASE_A),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_ANYEDGE  /* Trigger on both rising and falling edges */
+    };
+    ESP_ERROR_CHECK(gpio_config(&encoder_phase_a_config));
+    ESP_LOGI(TAG, "PHASE A (GPIO %d) configured with pull-up, interrupt on any edge", BOARD_BUTTON_ROTARY_PHASE_A);
+    
+    /* Configure PHASE B as input only (no interrupt) */
+    gpio_config_t encoder_phase_b_config = {
+        .pin_bit_mask = (1ULL << BOARD_BUTTON_ROTARY_PHASE_B),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE  /* No interrupt, just sampled */
+    };
+    ESP_ERROR_CHECK(gpio_config(&encoder_phase_b_config));
+    ESP_LOGI(TAG, "PHASE B (GPIO %d) configured with pull-up, no interrupt", BOARD_BUTTON_ROTARY_PHASE_B);
+    
+    /* Read initial pin states */
+    uint8_t initial_a = gpio_get_level(BOARD_BUTTON_ROTARY_PHASE_A);
+    uint8_t initial_b = gpio_get_level(BOARD_BUTTON_ROTARY_PHASE_B);
+    ESP_LOGI(TAG, "Initial encoder state: A=%d, B=%d", initial_a, initial_b);
+    s_last_seen_a = initial_a;
+    s_last_seen_b = initial_b;
+    
+    /* Create debug polling task */
+    ret = xTaskCreate(
+        encoder_debug_task,
+        "enc_debug",
+        2048,
+        NULL,
+        3,
+        NULL
+    );
+    if (ret != pdPASS) {
+        ESP_LOGW(TAG, "Failed to create encoder debug task (non-critical)");
+    }
+    
+    /* Attach ISR handler only to PHASE A */
+    ESP_ERROR_CHECK(gpio_isr_handler_add(BOARD_BUTTON_ROTARY_PHASE_A, rotary_encoder_isr_handler, NULL));
+    ESP_LOGI(TAG, "ISR handler attached to PHASE A");
+    
+    ESP_LOGI(TAG, "Rotary encoder initialized for relative volume control");
 
     return ESP_OK;
 }

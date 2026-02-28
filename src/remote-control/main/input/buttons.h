@@ -6,10 +6,6 @@
 #include "esp_event_base.h"
 #include "driver/gpio.h"
 
-#define PIN_PREVIOUS_TRACK GPIO_NUM_22
-#define PIN_PLAY_PAUSE GPIO_NUM_21
-#define PIN_NEXT_TRACK GPIO_NUM_19
-
 ESP_EVENT_DECLARE_BASE(BUTTON_EVENT);
 
 typedef enum {
@@ -25,7 +21,7 @@ typedef struct {
 
 /**
  * @file buttons.h
- * @brief Button handling module
+ * @brief Button handling module with rotary encoder volume control
  */
 esp_err_t buttons_init(void);
 

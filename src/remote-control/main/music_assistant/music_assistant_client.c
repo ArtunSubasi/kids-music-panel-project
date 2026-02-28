@@ -202,3 +202,37 @@ esp_err_t music_assistant_set_volume(int volume_level)
 
     return music_assistant_post_service("media_player/volume_set", payload);
 }
+
+esp_err_t music_assistant_volume_up(void)
+{
+    const char *device_id = CONFIG_DEVICE_ID;
+
+    if (device_id == NULL || strlen(device_id) == 0) {
+        ESP_LOGE(TAG, "DEVICE_ID not set");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char payload[256];
+    snprintf(payload, sizeof(payload),
+             "{\"device_id\":\"%s\"}",
+             device_id);
+
+    return music_assistant_post_service("media_player/volume_up", payload);
+}
+
+esp_err_t music_assistant_volume_down(void)
+{
+    const char *device_id = CONFIG_DEVICE_ID;
+
+    if (device_id == NULL || strlen(device_id) == 0) {
+        ESP_LOGE(TAG, "DEVICE_ID not set");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char payload[256];
+    snprintf(payload, sizeof(payload),
+             "{\"device_id\":\"%s\"}",
+             device_id);
+
+    return music_assistant_post_service("media_player/volume_down", payload);
+}
