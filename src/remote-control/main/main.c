@@ -29,6 +29,7 @@
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_controller.h"
 #include "input/buttons.h"
+#include "soft_power/soft_power.h"
 
 static const char *TAG = "MAIN_APP";
 
@@ -69,6 +70,8 @@ static void on_rfid_tag_scanned(void *arg, esp_event_base_t base, int32_t event_
 
 void app_main(void) {
 
+    ESP_ERROR_CHECK(soft_power_init());
+
     // Create the default event loop before initializing any components that rely on it
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -99,4 +102,8 @@ void app_main(void) {
     ESP_ERROR_CHECK(music_assistant_controller_init());
 
     ESP_LOGI(TAG, "System ready. Waiting for RFID cards...");
+
+    // Test soft power off after 10 seconds
+    //vTaskDelay(pdMS_TO_TICKS(10000));
+    //soft_power_shutdown();
 }

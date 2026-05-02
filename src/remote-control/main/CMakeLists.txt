@@ -11,6 +11,7 @@ idf_component_register(
         "wifi/wifi_controller.c"
         "common/app_events.c"
         "input/buttons.c"
+        "soft_power/soft_power.c"
     INCLUDE_DIRS
         "."
         "common"
@@ -19,6 +20,7 @@ idf_component_register(
         "music_assistant"
         "wifi"
         "input"
+        "soft_power"
     REQUIRES
         esp_wifi
         esp_netif

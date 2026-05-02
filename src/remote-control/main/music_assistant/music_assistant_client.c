@@ -4,6 +4,8 @@
 #include "esp_err.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 #include "common/config.h"
 
 static const char *TAG = "MUSIC_ASSISTANT_CLIENT";
@@ -367,20 +369,59 @@ esp_err_t music_assistant_get_media_position(float *position)
     // Log response for debugging
     ESP_LOGI(TAG, "State response (%d bytes): %s", data_read, response_buffer);
 
-    // Parse JSON to extract media_position from attributes
-    // Simple string search for "media_position":<value>
+    // Parse JSON to extract media_position and media_position_updated_at
     char *pos_str = strstr(response_buffer, "\"media_position\":");
-    if (pos_str) {
-        pos_str += strlen("\"media_position\":");
-        *position = atof(pos_str);
-        ESP_LOGI(TAG, "Current media position: %.1f seconds", *position);
-        free(response_buffer);
-        return ESP_OK;
-    } else {
+    char *updated_str = strstr(response_buffer, "\"media_position_updated_at\":\"");
+    
+    if (!pos_str) {
         ESP_LOGW(TAG, "media_position not found in response");
         free(response_buffer);
         return ESP_FAIL;
     }
+    
+    // Parse base position
+    pos_str += strlen("\"media_position\":");
+    float base_position = atof(pos_str);
+    
+    // If we have the updated_at timestamp, calculate actual current position
+    if (updated_str) {
+        updated_str += strlen("\"media_position_updated_at\":\"");
+        
+        // Parse ISO 8601 timestamp: "2026-02-28T15:21:09.014396+00:00"
+        struct tm timeinfo = {0};
+        char timestamp_str[64];
+        sscanf(updated_str, "%63[^\"]", timestamp_str);
+        
+        // Parse the timestamp (ignoring microseconds and timezone for simplicity)
+        if (strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S", &timeinfo) != NULL) {
+            time_t updated_time = mktime(&timeinfo);
+            
+            // Get current time
+            struct timeval now;
+            gettimeofday(&now, NULL);
+            time_t current_time = now.tv_sec;
+            
+            // Calculate elapsed time since the position was updated
+            double elapsed = difftime(current_time, updated_time);
+            
+            // Calculate actual current position
+            *position = base_position + (float)elapsed;
+            
+            ESP_LOGI(TAG, "Base position: %.1fs, elapsed: %.1fs, current position: %.1fs", 
+                     base_position, elapsed, *position);
+        } else {
+            // Fallback to base position if timestamp parsing fails
+            ESP_LOGW(TAG, "Failed to parse timestamp, using base position: %.1fs", base_position);
+            *position = base_position;
+        }
+    } else {
+        // No timestamp available, use base position
+        ESP_LOGI(TAG, "No timestamp found, using base position: %.1fs", base_position);
+        *position = base_position;
+    }
+    
+    free(response_buffer);
+    return ESP_OK;
 }
 
 esp_err_t music_assistant_seek_to_position(float position)

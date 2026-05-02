@@ -27,9 +27,12 @@
 #define BOARD_RFID_PIN_CS           15      /* Also called SDA in RC522 context */
 #define BOARD_RFID_PIN_RST          27      /* Soft-reset */
 
+/* ==================== Power Control ==================== */
+#define BOARD_SOFT_POWER_OFF       21
+
 /* ==================== Rotary Encoder Buttons ==================== */
 #define BOARD_BUTTON_ROTARY_LEFT    22
-#define BOARD_BUTTON_ROTARY_CENTER  21
+#define BOARD_BUTTON_ROTARY_CENTER  35
 #define BOARD_BUTTON_ROTARY_RIGHT   19
 #define BOARD_BUTTON_ROTARY_UP      32
 #define BOARD_BUTTON_ROTARY_DOWN    33

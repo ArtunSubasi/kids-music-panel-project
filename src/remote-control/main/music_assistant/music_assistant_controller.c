@@ -38,12 +38,13 @@ static TaskHandle_t s_worker_task_handle = NULL;
 
 // Seek debounce state
 static TimerHandle_t s_seek_debounce_timer = NULL;
+static TaskHandle_t s_seek_handler_task_handle = NULL;
 static int s_seek_forward_clicks = 0;
 static int s_seek_backward_clicks = 0;
-static float s_initial_position = 0.0f;
 
 #define SEEK_DEBOUNCE_MS 500
 #define SEEK_SECONDS_PER_CLICK 10
+#define SEEK_HANDLER_STACK_SIZE 4096
 
 static void music_assistant_worker_task(void *arg)
 {
@@ -70,7 +71,26 @@ static void music_assistant_worker_task(void *arg)
                     err = music_assistant_play_media(cmd.media_id);
                     break;
                 case MA_CMD_SEEK_TO_POSITION:
-                    err = music_assistant_seek_to_position(cmd.seek_position);
+                    {
+                        // First, get current media position
+                        float current_pos = 0.0f;
+                        err = music_assistant_get_media_position(&current_pos);
+                        if (err != ESP_OK) {
+                            ESP_LOGW(TAG, "Failed to get media position, seeking from 0");
+                            current_pos = 0.0f;
+                        }
+                        
+                        // Calculate target position
+                        float target_pos = current_pos + cmd.seek_position;
+                        if (target_pos < 0) {
+                            target_pos = 0;
+                        }
+                        
+                        ESP_LOGI(TAG, "Seeking: current=%.1fs, offset=%.1fs, target=%.1fs",
+                                 current_pos, cmd.seek_position, target_pos);
+                        
+                        err = music_assistant_seek_to_position(target_pos);
+                    }
                     break;
                 default:
                     ESP_LOGW(TAG, "Unknown command type: %d", cmd.type);
@@ -84,43 +104,50 @@ static void music_assistant_worker_task(void *arg)
     }
 }
 
+static void seek_handler_task(void *arg)
+{
+    (void)arg;
+    
+    while (1) {
+        // Wait for notification from timer callback
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        
+        int forward_clicks = s_seek_forward_clicks;
+        int backward_clicks = s_seek_backward_clicks;
+        
+        // Reset counters
+        s_seek_forward_clicks = 0;
+        s_seek_backward_clicks = 0;
+        
+        // Calculate net offset
+        int net_clicks = forward_clicks - backward_clicks;
+        if (net_clicks == 0) {
+            ESP_LOGW(TAG, "Seek cancelled (forward=%d, backward=%d)", forward_clicks, backward_clicks);
+            continue;
+        }
+        
+        float offset = net_clicks * SEEK_SECONDS_PER_CLICK;
+        
+        ESP_LOGI(TAG, "Debounce complete: clicks=%d, offset=%.1fs", net_clicks, offset);
+        
+        // Queue seek command to worker task with relative offset
+        ma_command_t cmd = {0};
+        cmd.type = MA_CMD_SEEK_TO_POSITION;
+        cmd.seek_position = offset;  // Store relative offset, worker will add to current position
+        
+        if (xQueueSend(s_command_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Failed to queue seek command (queue full)");
+        }
+    }
+}
+
 static void seek_debounce_timer_callback(TimerHandle_t timer)
 {
     (void)timer;
     
-    int forward_clicks = s_seek_forward_clicks;
-    int backward_clicks = s_seek_backward_clicks;
-    float initial_pos = s_initial_position;
-    
-    // Reset counters
-    s_seek_forward_clicks = 0;
-    s_seek_backward_clicks = 0;
-    s_initial_position = 0.0f;
-    
-    // Calculate net offset
-    int net_clicks = forward_clicks - backward_clicks;
-    if (net_clicks == 0) {
-        ESP_LOGW(TAG, "Seek cancelled (forward=%d, backward=%d)", forward_clicks, backward_clicks);
-        return;
-    }
-    
-    float offset = net_clicks * SEEK_SECONDS_PER_CLICK;
-    float new_position = initial_pos + offset;
-    
-    if (new_position < 0) {
-        new_position = 0;
-    }
-    
-    ESP_LOGI(TAG, "Seeking: initial=%.1fs, clicks=%d, offset=%.1fs, target=%.1fs",
-             initial_pos, net_clicks, offset, new_position);
-    
-    // Queue seek command to worker task (don't make HTTP call from timer context)
-    ma_command_t cmd = {0};
-    cmd.type = MA_CMD_SEEK_TO_POSITION;
-    cmd.seek_position = new_position;
-    
-    if (xQueueSend(s_command_queue, &cmd, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "Failed to queue seek command (queue full)");
+    // Just notify the seek handler task - minimal stack usage
+    if (s_seek_handler_task_handle != NULL) {
+        xTaskNotifyGive(s_seek_handler_task_handle);
     }
 }
 
@@ -151,19 +178,7 @@ static void music_assistant_button_event_handler(void *arg,
         case BUTTON_EVENT_ID_SEEK_FORWARD_PRESSED:
         case BUTTON_EVENT_ID_SEEK_BACKWARD_PRESSED:
             {
-                // Check if this is the first click
-                bool is_first_click = (s_seek_forward_clicks == 0 && s_seek_backward_clicks == 0);
-                
-                if (is_first_click) {
-                    // Fetch current position
-                    esp_err_t err = music_assistant_get_media_position(&s_initial_position);
-                    if (err != ESP_OK) {
-                        ESP_LOGW(TAG, "Failed to get media position, using 0");
-                        s_initial_position = 0.0f;
-                    }
-                }
-                
-                // Increment appropriate counter
+                // Increment appropriate counter (don't fetch position here - no stack space)
                 if (event_id == BUTTON_EVENT_ID_SEEK_FORWARD_PRESSED) {
                     s_seek_forward_clicks++;
                     ESP_LOGI(TAG, "Seek forward click %d", s_seek_forward_clicks);
@@ -179,7 +194,7 @@ static void music_assistant_button_event_handler(void *arg,
                     ESP_LOGW(TAG, "Seek debounce timer is NULL");
                 }
                 
-                return;  // Don't queue command, timer callback will handle seek
+                return;  // Don't queue command, timer callback will handle it
             }
         default:
             ESP_LOGW(TAG, "Unsupported button event id=%ld", (long)event_id);
@@ -198,6 +213,21 @@ esp_err_t music_assistant_controller_init(void)
         return ESP_OK;
     }
 
+    // Create seek handler task
+    BaseType_t ret = xTaskCreate(
+        seek_handler_task,
+        "seek_handler",
+        SEEK_HANDLER_STACK_SIZE,
+        NULL,
+        WORKER_TASK_PRIORITY,
+        &s_seek_handler_task_handle
+    );
+    
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create seek handler task");
+        return ESP_ERR_NO_MEM;
+    }
+
     // Create seek debounce timer
     s_seek_debounce_timer = xTimerCreate(
         "seek_debounce",
@@ -209,6 +239,8 @@ esp_err_t music_assistant_controller_init(void)
     
     if (s_seek_debounce_timer == NULL) {
         ESP_LOGE(TAG, "Failed to create seek debounce timer");
+        vTaskDelete(s_seek_handler_task_handle);
+        s_seek_handler_task_handle = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -216,11 +248,15 @@ esp_err_t music_assistant_controller_init(void)
     s_command_queue = xQueueCreate(COMMAND_QUEUE_SIZE, sizeof(ma_command_t));
     if (s_command_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create command queue");
+        xTimerDelete(s_seek_debounce_timer, 0);
+        s_seek_debounce_timer = NULL;
+        vTaskDelete(s_seek_handler_task_handle);
+        s_seek_handler_task_handle = NULL;
         return ESP_ERR_NO_MEM;
     }
 
     // Create worker task
-    BaseType_t ret = xTaskCreate(
+    ret = xTaskCreate(
         music_assistant_worker_task,
         "ma_worker",
         WORKER_TASK_STACK_SIZE,
@@ -233,6 +269,10 @@ esp_err_t music_assistant_controller_init(void)
         ESP_LOGE(TAG, "Failed to create worker task");
         vQueueDelete(s_command_queue);
         s_command_queue = NULL;
+        xTimerDelete(s_seek_debounce_timer, 0);
+        s_seek_debounce_timer = NULL;
+        vTaskDelete(s_seek_handler_task_handle);
+        s_seek_handler_task_handle = NULL;
         return ESP_ERR_NO_MEM;
     }
 
