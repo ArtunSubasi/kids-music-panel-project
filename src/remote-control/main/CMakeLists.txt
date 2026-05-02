@@ -11,6 +11,7 @@ idf_component_register(
         "wifi/wifi_controller.c"
         "common/app_events.c"
         "input/buttons.c"
+        "input/potentiometer.c"
         "soft_power/soft_power.c"
     INCLUDE_DIRS
         "."

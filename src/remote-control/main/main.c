@@ -29,6 +29,7 @@
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_controller.h"
 #include "input/buttons.h"
+#include "input/potentiometer.h"
 #include "soft_power/soft_power.h"
 
 static const char *TAG = "MAIN_APP";
@@ -90,6 +91,8 @@ void app_main(void) {
     // Start WiFi using credentials from menuconfig; display will be updated by handlers
     ESP_ERROR_CHECK(wifi_controller_init());
     ESP_ERROR_CHECK(wifi_manager_init());
+
+    ESP_ERROR_CHECK(potentiometer_init());
 
     // ---------------------------------------------------------
     // 3. RFID INITIALIZATION (via rfid_scanner module)

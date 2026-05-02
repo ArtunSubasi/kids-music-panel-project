@@ -12,8 +12,6 @@ typedef enum {
 	BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED = 1,
 	BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED = 2,
 	BUTTON_EVENT_ID_NEXT_TRACK_PRESSED = 3,
-	BUTTON_EVENT_ID_SEEK_FORWARD_PRESSED = 4,
-	BUTTON_EVENT_ID_SEEK_BACKWARD_PRESSED = 5,
 } buttons_event_id_t;
 
 typedef struct {
@@ -23,7 +21,7 @@ typedef struct {
 
 /**
  * @file buttons.h
- * @brief Button handling module with rotary encoder volume control
+ * @brief Button handling module
  */
 esp_err_t buttons_init(void);
 
