@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ESP32 firmware (C/ESP-IDF) for a kids' music panel. Children scan RFID cards to trigger music playback; the ESP32 communicates with a Home Assistant / Music Assistant server over WiFi. Audio streams via a separate ESP32 Squeezelite client to Bluetooth speakers.
+ESP32 firmware (C/ESP-IDF) for a kids' music panel. Children scan RFID cards to trigger music playback; the ESP32 communicates with a Home Assistant / Music Assistant server over WiFi. Audio streams via a separate ESP32 Squeezelite client to hard-wired speakers.
 
 Only the remote control firmware lives in this repo (`src/remote-control/`). Home Assistant configuration and the Squeezelite client are external.
 
@@ -70,11 +70,3 @@ Defined in `main/common/board_pins.h`. Two SPI buses are used:
 ### Application Constants
 
 `main/common/config.h` holds the MA device ID, media player entity name, HTTP timeout, display update interval, and WiFi retry settings. Change these before adding new features that depend on timing or MA entity names.
-
-## Development Roadmap
-
-The codebase is in Phase 1 (modularization complete). Planned phases per `main/ARCHITECTURE.md`:
-- **Phase 2**: FreeRTOS message queue for async display updates
-- **Phase 3**: HTTP error handling and WiFi resilience
-- **Phase 4**: NVS-backed media mappings (no recompile to add cards)
-- **Phase 5**: JSON config + web-based mapping editor
