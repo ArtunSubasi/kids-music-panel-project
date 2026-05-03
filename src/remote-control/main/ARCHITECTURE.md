@@ -12,7 +12,8 @@ The Kids Music Panel is an ESP32-based RFID card reader system that allows child
 - **Visual Feedback**: SSD1306 OLED display on SPI2
 - **WiFi Connectivity**: Connects to Music Assistant service
 - **Media Mapping**: UID-to-media-ID database
-- **Event-Driven Architecture**: FreeRTOS task-based
+- **Event-Driven Architecture**: FreeRTOS task and event loop based
+- **Physical Controls**: Prev/Play-Pause/Next buttons + potentiometer volume
 
 ---
 
@@ -38,159 +39,189 @@ The Kids Music Panel is an ESP32-based RFID card reader system that allows child
 | CS/SDA | GPIO 15 | Chip select |
 | RST | GPIO 27 | Reset signal |
 
-### 2.2 Component List
-- **MCU**: ESP32
+### 2.2 Other Pins
+| Component | Pin | Purpose |
+|-----------|-----|---------|
+| Button Prev | GPIO 22 | Previous track |
+| Button Play/Pause | GPIO 25 | Play/pause toggle |
+| Button Next | GPIO 19 | Next track |
+| Potentiometer | GPIO 33 (ADC1_CH5) | Volume control |
+| Soft Power | GPIO 21 | Hardware power-off latch |
+
+All pin definitions live in `common/board_pins.h`.
+
+### 2.3 Component List
+- **MCU**: ESP32 WROOM
 - **OLED**: SSD1306 (128x64, SPI)
 - **RFID Reader**: RC522 (SPI)
+- **Buttons**: 3× GPIO (debounced via ISR)
+- **Potentiometer**: B10K linear, read via ADC1
 - **WiFi**: Built-in ESP32 WiFi module
 
 ---
 
 ## 3. Software Architecture
 
-### 3.1 Core Modules
+### 3.1 Module Structure
 
-#### A. WiFi Manager (`wifi_manager.h/c`)
-**Responsibility**: Handle WiFi connectivity and state management
-- Initialization with menuconfig credentials
-- Connection state tracking (connected/disconnected/failed)
-- Event-based handler for state changes
-- Display updates during WiFi operations
+All modules live under `main/` as subdirectories. Each module owns its own event base where applicable; `app_events.h` is reserved for cross-cutting events only.
 
-**Current Status**: ✅ Implemented in main
-**Required Changes**: Extract into separate module
+#### `common/`
+- **`config.h`** — application-wide timing constants, display message strings, device/entity IDs
+- **`board_pins.h`** — all GPIO and SPI pin definitions
+- **`app_events.h/c`** — `APP_EVENTS` event base for cross-cutting events (WiFi state, parental limit, BLE, errors)
 
-#### B. Display Manager (`display_manager.h/c`)
-**Responsibility**: Manage OLED display output
-- Initialize SSD1306 on SPI2
-- Queue-based display updates (thread-safe)
-- Status screens:
-  - Waiting for card
-  - Card detected (type + UID)
-  - WiFi connecting/connected/failed
-  - Media playback confirmation
+#### `display/`
+- **`display.c/h`** — SSD1306 driver init and `display_show()` primitive
+- **`display_controller.c/h`** — subscribes to `WIFI_EVENT`/`IP_EVENT`; maps WiFi state changes to display text
 
-**Current Status**: ✅ Partially implemented
-**Required Changes**: Create dedicated module with message queue
+#### `rfid/`
+- **`rfid_scanner.c/h`** — RC522 init on SPI3; `rfid_scanner_start()` registers the card-state-change callback
 
-#### C. RFID Scanner (`rfid_scanner.h/c`)
-**Responsibility**: Handle RC522 operations
-- Initialize RC522 on SPI3
-- Register event callbacks
-- Process card state changes (inserted/removed)
-- Extract UID and card type information
+#### `music_assistant/`
+- **`music_assistant_client.c/h`** — HTTP client; all MA API calls (see §3.3)
+- **`music_assistant_controller.c/h`** — subscribes to `BUTTON_EVENT`; enqueues commands into a FreeRTOS queue; worker task executes them via the client
 
-**Current Status**: ✅ Implemented in main
-**Required Changes**: Extract into separate module
+#### `wifi/`
+- **`wifi_manager.c/h`** — WiFi init, STA mode start
+- **`wifi_controller.c/h`** — subscribes to `WIFI_EVENT`/`IP_EVENT`; manages retry counter and reconnection
 
-#### D. Media Mapper (`media_mapping.h/c`)
-**Responsibility**: Map RFID UIDs to Media IDs
-- Maintain UID↔MediaID lookup table
-- Support multiple storage backends:
-  - **Phase 1**: Hard-coded array
-  - **Phase 2**: NVS (Non-Volatile Storage)
-  - **Phase 3**: JSON configuration
+#### `input/`
+- **`buttons.c/h`** — GPIO ISR debounce for 3 buttons; publishes on `BUTTON_EVENT` event base (`BUTTON_EVENT_ID_PREVIOUS_TRACK_PRESSED`, `BUTTON_EVENT_ID_PLAY_PAUSE_PRESSED`, `BUTTON_EVENT_ID_NEXT_TRACK_PRESSED`)
+- **`potentiometer.c/h`** — FreeRTOS task polling ADC1_CH5 every 100 ms; applies 8-sample moving average, 2% hysteresis, 500 ms rate limit, 400 ms settling detection; calls `music_assistant_set_volume()` directly
 
-**Current Status**: ✅ Header exists, implementation needed
-**Required Changes**: Implement lookup and storage logic
+#### `soft_power/`
+- **`soft_power.c/h`** — controls GPIO-21 power latch; `soft_power_shutdown()` cuts board power
 
-#### E. Music Assistant Client (`music_assistant_client.h/c`)
-**Responsibility**: HTTP communication with Music Assistant API
-- Construct API requests
-- Handle authentication (Bearer token)
-- Send play_media requests
-- Error handling and retry logic
-- Response parsing
+#### `media_mapping.c/h`
+Static lookup table mapping RFID UID strings (`"AA BB CC DD"`) to Music Assistant media URIs. Add new cards here.
 
-**Current Status**: ✅ Basic implementation in main
-**Required Changes**: Extract and enhance with error handling
+#### `main.c`
+Thin entry point: initialises NVS, default event loop, netif, then calls each module's `_init()` in order. The `on_rfid_tag_scanned` callback (RFID → display + MA play) is still defined here pending a future move to `rfid_scanner.c` or a dedicated handler.
 
-#### F. Configuration Manager (`config.h`)
-**Responsibility**: Centralize all configurable values
-- Menuconfig integration points
-- Pin definitions
-- API endpoints
-- Timing constants
+---
 
-**Current Status**: ⚠️ Scattered throughout main
-**Required Changes**: Consolidate into single header
+### 3.2 Event Buses
 
-### 3.2 Data Structures
+| Event Base | Owner | Events |
+|---|---|---|
+| `WIFI_EVENT` / `IP_EVENT` | ESP-IDF | WiFi and IP lifecycle (used by `wifi_controller`, `display_controller`) |
+| `BUTTON_EVENT` | `input/buttons.h` | `PREVIOUS_TRACK_PRESSED`, `PLAY_PAUSE_PRESSED`, `NEXT_TRACK_PRESSED` |
+| `RC522_EVENT` | rc522 library | Card state changes (ACTIVE/IDLE) |
+| `APP_EVENTS` | `common/app_events.h` | Cross-cutting: WiFi status, parental limit, BLE, errors (reserved for future use) |
+
+Module-specific event bases are kept separate; `APP_EVENTS` is only for events that span multiple subsystems.
+
+---
+
+### 3.3 Music Assistant Client API
 
 ```c
-// RFID Card Info
-typedef struct {
-    rc522_picc_uid_t uid;
-    rc522_picc_type_t type;
-    char uid_str[RC522_PICC_UID_STR_BUFFER_SIZE_MAX];
-} rfid_card_t;
-
-// Media Mapping Entry
-typedef struct {
-    uint8_t uid_bytes[10];
-    uint8_t uid_len;
-    const char *media_id;
-    const char *friendly_name;
-} media_mapping_entry_t;
-
-// Display Update Message
-typedef struct {
-    char line1[32];
-    char line2[32];
-    uint32_t duration_ms; // 0 = indefinite
-} display_message_t;
+esp_err_t music_assistant_client_init(void);
+esp_err_t music_assistant_play_media(const char *media_id);
+esp_err_t music_assistant_previous_track(void);
+esp_err_t music_assistant_play_pause(void);
+esp_err_t music_assistant_next_track(void);
+esp_err_t music_assistant_set_volume(int volume_level);   // 0–100
+esp_err_t music_assistant_volume_up(void);
+esp_err_t music_assistant_volume_down(void);
+esp_err_t music_assistant_seek_forward(int seconds);
+esp_err_t music_assistant_seek_backward(int seconds);
+esp_err_t music_assistant_get_media_position(float *position);
+esp_err_t music_assistant_seek_to_position(float position);
 ```
 
-### 3.3 Event Flow
+---
 
+### 3.4 Event Flows
+
+**RFID card scan → playback**
 ```
-[Card Scanned] 
-    ↓
-[RC522 ISR] → [on_rfid_tag_scanned event]
-    ↓
-[Extract UID & Type]
-    ↓
-[Display Update: Show Card Info]
-    ↓
-[Lookup Media ID in Mapping]
-    ↓
-[If Found] → [HTTP POST to Music Assistant]
-    ↓
-[Update Display: Playing / Error]
+[RC522 ISR] → on_rfid_tag_scanned (main.c)
+    → display_show(card type, UID)
+    → media_mapping_get_media_id(uid)
+    → music_assistant_play_media(media_id)
+```
+
+**Button press → MA command**
+```
+[GPIO ISR] → BUTTON_EVENT posted
+    → music_assistant_controller handler
+    → ma_command_t enqueued (FreeRTOS queue, size 10)
+    → worker task (ma_worker) dequeues
+    → music_assistant_client call (HTTP POST)
+```
+
+**Potentiometer → volume**
+```
+[pot_task, 100 ms] → ADC read
+    → 8-sample moving average
+    → hysteresis check (>2% change)
+    → rate-limit / settling check
+    → music_assistant_set_volume()
+```
+
+**WiFi events → display**
+```
+WIFI_EVENT_STA_START        → display "WLAN connecting..."
+WIFI_EVENT_STA_DISCONNECTED → display "WLAN failed"
+IP_EVENT_STA_GOT_IP         → display "WLAN connected"
+```
+
+---
+
+### 3.5 Data Structures
+
+```c
+// Media mapping entry (media_mapping.c)
+typedef struct {
+    const char *uid_string;   // e.g. "B9 83 53 97"
+    const char *media_id;     // e.g. "radiobrowser://radio/..."
+} uid_media_entry_t;
+
+// Music Assistant command (music_assistant_controller.c)
+typedef struct {
+    ma_command_type_t type;   // PREVIOUS_TRACK | PLAY_PAUSE | NEXT_TRACK | PLAY_MEDIA
+    union {
+        char media_id[128];   // populated for PLAY_MEDIA
+    };
+} ma_command_t;
+
+// Button event data (input/buttons.h)
+typedef struct {
+    int pin;
+    buttons_event_id_t button_id;
+} buttons_event_data_t;
 ```
 
 ---
 
 ## 4. Implementation Roadmap
 
-### Phase 1: Modularization (Current)
-- [ ] Extract WiFi logic → `wifi_manager.c`
-- [ ] Extract Display logic → `display_manager.c`
-- [ ] Extract RFID logic → `rfid_scanner.c`
-- [ ] Extract HTTP logic → `music_assistant_client.c`
-- [ ] Implement basic `media_mapping.c`
-- [ ] Create `config.h` header
+### Phase 1: Modularization ✅ Complete
+- [x] Extract WiFi logic → `wifi/wifi_manager.c`
+- [x] Extract Display logic → `display/display.c`
+- [x] Extract RFID logic → `rfid/rfid_scanner.c`
+- [x] Extract HTTP logic → `music_assistant/music_assistant_client.c`
+- [x] Implement `media_mapping.c`
+- [x] Create `common/config.h` and `common/board_pins.h`
 
-### Phase 2: Message Queue Integration
-- [ ] Add display message queue (FreeRTOS queue)
-- [ ] Implement async display updates
-- [ ] Add RFID event queue for debouncing
-- [ ] Thread-safe logging
+### Phase 2: Async Command Queues (Partially done)
+- [x] MA controller uses FreeRTOS command queue + worker task (`ma_worker`)
+- [ ] Display updates via message queue (currently direct `display_show()` calls)
+- [ ] RFID event handling moved out of `main.c`
 
 ### Phase 3: Error Handling & Resilience
-- [ ] HTTP timeout handling
-- [ ] WiFi reconnection logic
-- [ ] Display error codes
-- [ ] Graceful degradation
+- [ ] HTTP timeout and retry handling
+- [ ] WiFi reconnection with exponential back-off
+- [ ] Display error codes for failed API calls
 
 ### Phase 4: NVS Storage
 - [ ] Migrate media mappings to NVS
-- [ ] Support hot-reloading of mappings
-- [ ] Backup to flash
+- [ ] Support runtime mapping updates without recompile
 
 ### Phase 5: JSON Configuration
-- [ ] Support JSON config file
-- [ ] SPIFFS or LittleFS integration
+- [ ] JSON config file via SPIFFS or LittleFS
 - [ ] Web-based mapping editor
 
 ---
@@ -199,104 +230,69 @@ typedef struct {
 
 ```
 src/remote-control/
-├── main/
-│   └── main.c         (entry point)
-├── components/
-│   ├── config/
-│   │   ├── config.h
-│   │   └── config.c
-│   ├── wifi_manager/
-│   │   ├── wifi_manager.h
-│   │   └── wifi_manager.c
-│   ├── display_manager/
-│   │   ├── display_manager.h
-│   │   └── display_manager.c
-│   ├── rfid_scanner/
-│   │   ├── rfid_scanner.h
-│   │   └── rfid_scanner.c
-│   ├── music_assistant/
-│   │   ├── music_assistant_client.h
-│   │   └── music_assistant_client.c
-│   └── media_mapping/
-│       ├── media_mapping.h
-│       └── media_mapping.c
-└── docs/
-    ├── ARCHITECTURE.md             (this file)
-    ├── API.md
-    └── BUILD.md
+└── main/
+    ├── main.c                    # Entry point; on_rfid_tag_scanned callback (TODO: move)
+    ├── media_mapping.c/h         # Static UID→media URI table
+    ├── CMakeLists.txt
+    ├── Kconfig.projbuild         # menuconfig: WiFi SSID/password, MA host/API key
+    ├── idf_component.yml         # Component deps: rc522 ^3.4.3, ssd1306 ^1.1.2
+    ├── common/
+    │   ├── config.h              # Timing constants, display strings, device/entity IDs
+    │   ├── board_pins.h          # All GPIO and SPI pin definitions
+    │   └── app_events.h/c        # APP_EVENTS base (cross-cutting events)
+    ├── display/
+    │   ├── display.c/h           # SSD1306 driver + display_show()
+    │   └── display_controller.c/h # WiFi events → display text
+    ├── rfid/
+    │   └── rfid_scanner.c/h      # RC522 init + event registration
+    ├── music_assistant/
+    │   ├── music_assistant_client.c/h     # HTTP API client
+    │   └── music_assistant_controller.c/h # Button events → command queue → client
+    ├── wifi/
+    │   ├── wifi_manager.c/h      # WiFi STA init
+    │   └── wifi_controller.c/h   # Retry logic, reconnection
+    ├── input/
+    │   ├── buttons.c/h           # GPIO ISR + BUTTON_EVENT publishing
+    │   └── potentiometer.c/h     # ADC polling task + smoothing → set_volume()
+    └── soft_power/
+        └── soft_power.c/h        # GPIO-21 power latch
 ```
 
 ---
 
 ## 6. Configuration (menuconfig)
 
-Required configuration points:
-```
-MUSIC_ASSISTANT_HOST        (string) - API endpoint
-MUSIC_ASSISTANT_API_KEY     (string) - Bearer token
-WIFI_SSID                   (string) - WiFi network
-WIFI_PASSWORD               (string) - WiFi password
-DEVICE_ID                   (string) - Unique device identifier
-```
+Required `idf.py menuconfig` entries:
+
+| Key | Description |
+|-----|-------------|
+| `WIFI_SSID` | WiFi network name |
+| `WIFI_PASSWORD` | WiFi password |
+| `MUSIC_ASSISTANT_HOST` | MA API base URL (e.g. `http://192.168.x.x:8000`) |
+| `MUSIC_ASSISTANT_API_KEY` | Bearer token |
+
+Static constants (not via menuconfig) in `common/config.h`:
+- `CONFIG_DEVICE_ID` — unique device identifier
+- `CONFIG_MEDIA_PLAYER_ENTITY_ID` — Home Assistant entity name for the Squeezelite player
 
 ---
 
-## 7. Testing Strategy
+## 7. Dependencies
 
-### Unit Tests
-- Media mapping lookup
-- UID-to-string conversion
-- Configuration parsing
-
-### Integration Tests
-- WiFi connection flow
-- RFID card detection
-- HTTP request sending
-- Display message queue
-
-### Manual Tests
-- Card scanning with valid mapping
-- Card scanning with invalid UID
-- WiFi disconnect/reconnect
-- Display visibility in different lighting
+- **FreeRTOS**: task creation, queues, timers
+- **ESP-IDF**: WiFi, NVS, HTTP client, ADC, GPIO, logging
+- **abobija/rc522 ^3.4.3**: RC522 RFID driver
+- **chill-sam/ssd1306 ^1.1.2**: SSD1306 OLED driver
+- **cJSON** (future, Phase 5): JSON config parsing
 
 ---
 
-## 8. Dependencies
-
-- **FreeRTOS**: Task management, queues, event groups
-- **ESP-IDF**: WiFi, NVS, HTTP client, logging
-- **RC522 Driver**: "abobija" rc522-rfid component
-- **SSD1306 Driver**: SPI-based OLED library
-- **cJSON** (future): JSON parsing for config
-
----
-
-## 9. Performance Targets
+## 8. Performance Targets
 
 | Metric | Target |
 |--------|--------|
-| Card detection latency | < 1s |
-| HTTP request timeout | 5s |
-| Display update latency | < 100ms |
-| WiFi reconnection time | < 10s |
-| Memory footprint | < 500KB (heap) |
-
----
-
-## 10. Security Considerations
-
-- ✅ Bearer token authentication for API
-- ⚠️ WiFi credentials in plaintext (menuconfig)
-- TODO: UID validation before API call
-- TODO: Rate limiting on API requests
-- TODO: Encrypted storage for sensitive data
-
----
-
-## Revision History
-
-| Date | Version | Author | Changes |
-|------|---------|--------|---------|
-| 2025-01-XX | 0.1 | Initial | Architecture specification |
-
+| Card detection latency | < 1 s |
+| HTTP request timeout | 5 s |
+| Display update latency | < 100 ms |
+| WiFi reconnection time | < 10 s |
+| Potentiometer update rate | 500 ms min interval |

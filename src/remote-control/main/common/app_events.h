@@ -78,14 +78,6 @@ typedef enum {
      * Future Feature Events (reserved for expansion)
      */
     
-    /** Button pressed
-     * 
-     * Reserved for button controller module
-     * Event data: button_event_t* with button_id and press_type
-     * Use case: Volume control, skip track, etc.
-     */
-    APP_EVENT_BUTTON_PRESSED,
-    
     /** Parental control time limit reached
      * 
      * Reserved for parental control module
