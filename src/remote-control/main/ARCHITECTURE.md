@@ -62,6 +62,69 @@ All pin definitions live in `common/board_pins.h`.
 
 ## 3. Software Architecture
 
+### 3.0 Component Diagram
+
+```mermaid
+flowchart TD
+    subgraph HW["Hardware"]
+        RC522["RC522 RFID\n(SPI3)"]
+        OLED["SSD1306 OLED\n(SPI2)"]
+        BTNS["Buttons ×3\n(GPIO 22/25/19)"]
+        POT_HW["Potentiometer\n(ADC1_CH5)"]
+    end
+
+    subgraph Drivers["Drivers & Input"]
+        rfid["rfid_scanner"]
+        disp["display"]
+        btn["buttons"]
+        pot["potentiometer"]
+    end
+
+    RC522_E([RC522_EVENT])
+    BTN_E([BUTTON_EVENT])
+    WIFI_E([WIFI_EVENT / IP_EVENT])
+
+    subgraph Controllers["Controllers"]
+        rfid_cb["on_rfid_tag_scanned\n(main.c)"]
+        disp_ctrl["display_controller"]
+        wifi_ctrl["wifi_controller"]
+        ma_ctrl["music_assistant_controller\n(queue + worker task)"]
+    end
+
+    subgraph Services["Services"]
+        wifi_mgr["wifi_manager"]
+        ma_client["music_assistant_client"]
+        media_map["media_mapping"]
+    end
+
+    MA_API[(Music Assistant\nHTTP API)]
+
+    RC522 --> rfid
+    OLED --> disp
+    BTNS --> btn
+    POT_HW --> pot
+
+    rfid --> RC522_E
+    btn --> BTN_E
+    wifi_mgr -->|triggers| WIFI_E
+
+    RC522_E --> rfid_cb
+    BTN_E --> ma_ctrl
+    WIFI_E --> disp_ctrl
+    WIFI_E --> wifi_ctrl
+
+    rfid_cb --> disp
+    rfid_cb --> media_map
+    rfid_cb --> ma_client
+    disp_ctrl --> disp
+    pot -->|set_volume| ma_client
+    ma_ctrl --> ma_client
+
+    ma_client --> MA_API
+```
+
+---
+
 ### 3.1 Module Structure
 
 All modules live under `main/` as subdirectories. Each module owns its own event base where applicable; `app_events.h` is reserved for cross-cutting events only.
@@ -136,36 +199,108 @@ esp_err_t music_assistant_seek_to_position(float position);
 ### 3.4 Event Flows
 
 **RFID card scan → playback**
-```
-[RC522 ISR] → on_rfid_tag_scanned (main.c)
-    → display_show(card type, UID)
-    → media_mapping_get_media_id(uid)
-    → music_assistant_play_media(media_id)
+
+```mermaid
+sequenceDiagram
+    participant HW as RC522 Hardware
+    participant rfid as rfid_scanner
+    participant cb as on_rfid_tag_scanned
+    participant disp as display
+    participant mm as media_mapping
+    participant mac as music_assistant_client
+    participant API as Music Assistant API
+
+    HW->>rfid: card detected (SPI ISR)
+    rfid->>cb: RC522_EVENT (ACTIVE state)
+    cb->>disp: display_show(type, UID)
+    cb->>mm: get_media_id(uid)
+    mm-->>cb: media_id / NULL
+    alt media_id found
+        cb->>mac: play_media(media_id)
+        mac->>API: HTTP POST /command/play_media
+        API-->>mac: 200 OK
+    else unknown card
+        cb->>cb: log warning, skip
+    end
 ```
 
 **Button press → MA command**
-```
-[GPIO ISR] → BUTTON_EVENT posted
-    → music_assistant_controller handler
-    → ma_command_t enqueued (FreeRTOS queue, size 10)
-    → worker task (ma_worker) dequeues
-    → music_assistant_client call (HTTP POST)
+
+```mermaid
+sequenceDiagram
+    participant GPIO as Button GPIO
+    participant btn as buttons
+    participant ctrl as music_assistant_controller
+    participant Q as FreeRTOS Queue
+    participant W as ma_worker task
+    participant mac as music_assistant_client
+    participant API as Music Assistant API
+
+    GPIO->>btn: GPIO interrupt (debounced)
+    btn->>ctrl: BUTTON_EVENT posted
+    ctrl->>Q: xQueueSend(ma_command_t)
+    Note over W: blocking on xQueueReceive
+    Q->>W: command dequeued
+    W->>mac: previous / play_pause / next_track()
+    mac->>API: HTTP POST /command
+    API-->>mac: 200 OK
 ```
 
-**Potentiometer → volume**
-```
-[pot_task, 100 ms] → ADC read
-    → 8-sample moving average
-    → hysteresis check (>2% change)
-    → rate-limit / settling check
-    → music_assistant_set_volume()
+**WiFi connect → display**
+
+```mermaid
+sequenceDiagram
+    participant wm as wifi_manager
+    participant stack as ESP-IDF WiFi
+    participant wc as wifi_controller
+    participant dc as display_controller
+    participant d as display
+
+    wm->>stack: esp_wifi_start()
+    par
+        stack->>wc: WIFI_EVENT_STA_START
+    and
+        stack->>dc: WIFI_EVENT_STA_START
+    end
+    wc->>stack: esp_wifi_connect()
+    dc->>d: "WLAN connecting..."
+    alt connection succeeds
+        par
+            stack->>wc: IP_EVENT_STA_GOT_IP
+        and
+            stack->>dc: IP_EVENT_STA_GOT_IP
+        end
+        wc->>wc: reset retry counter
+        dc->>d: "WLAN connected"
+    else connection fails / disconnects
+        par
+            stack->>wc: WIFI_EVENT_STA_DISCONNECTED
+        and
+            stack->>dc: WIFI_EVENT_STA_DISCONNECTED
+        end
+        dc->>d: "WLAN failed"
+        Note over wc: retry up to 5× then give up
+        wc->>stack: esp_wifi_connect() (retry)
+    end
 ```
 
-**WiFi events → display**
-```
-WIFI_EVENT_STA_START        → display "WLAN connecting..."
-WIFI_EVENT_STA_DISCONNECTED → display "WLAN failed"
-IP_EVENT_STA_GOT_IP         → display "WLAN connected"
+**Potentiometer → volume** (polling loop)
+
+```mermaid
+flowchart TD
+    A([pot_task tick: every 100 ms]) --> B[ADC oneshot read]
+    B --> C[8-sample moving average]
+    C --> D["map ADC value → volume (0–100%)"]
+    D --> E{change > 2%?\nhysteresis}
+    E -- No --> F{pending volume\n& settled ≥ 400 ms?}
+    F -- Yes --> I[send settled update]
+    F -- No --> A
+    E -- Yes --> G{≥ 500 ms since\nlast update?}
+    G -- Yes --> H[send immediate update]
+    G -- No --> J[store as pending]
+    H & I --> K[music_assistant_set_volume]
+    J --> A
+    K --> A
 ```
 
 ---
